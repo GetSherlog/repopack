@@ -12,6 +12,7 @@ int main(int argc, char** argv) {
         std::string includePatterns;
         std::string excludePatterns;
         std::string tokenEncodingStr = "cl100k_base";
+        std::string fileSelectionStr = "all";
         
         // Required input directory
         app.add_option("-i,--input", options.inputDir, "Input directory (required)")
@@ -44,49 +45,102 @@ int main(int argc, char** argv) {
             ->check(CLI::Range(1u, 32u));
         
         // Token counting options
-        app.add_flag("--tokens", options.countTokens, "Display token count of the generated prompt");
+        app.add_flag("--count-tokens", options.countTokens, "Count tokens in the output");
+        app.add_option("--token-encoding", tokenEncodingStr, "Token encoding to use: cl100k_base, r50k_base, p50k_base (default: cl100k_base)")
+            ->check(CLI::IsMember({"cl100k_base", "r50k_base", "p50k_base"}));
+        app.add_flag("--only-show-token-count", options.onlyShowTokenCount, "Only show token count without generating full output");
         
-        // Token count only (no output generation)
-        app.add_flag("--tokens-only", options.onlyShowTokenCount, "Only display token count without generating the full output")
-            ->needs("--tokens");
-        
-        // Tokenizer encoding option
-        app.add_option("--encoding", tokenEncodingStr, 
-                      "Specify a tokenizer for token count (default: cl100k_base)")
-            ->check(CLI::IsMember({"cl100k_base", "cl100k", "p50k_base", "p50k", "p50k_edit", "r50k_base", "r50k", "gpt2", "o200k_base", "o200k"}))
-            ->needs("--tokens");
+        // File selection strategy options
+        auto fileSelectionOpt = app.add_option("--file-selection", fileSelectionStr, 
+                                        "File selection strategy: all, scoring (default: all)")
+            ->check(CLI::IsMember({"all", "scoring"}));
             
-        // Add a help section for tokenizers
-        app.footer(
-            "Supported tokenizers:\n"
-            "  cl100k_base  - ChatGPT models, text-embedding-ada-002\n"
-            "  p50k_base    - Code models, text-davinci-002, text-davinci-003\n"
-            "  p50k_edit    - Edit models like text-davinci-edit-001, code-davinci-edit-001\n"
-            "  r50k_base    - GPT-3 models like davinci (alias: gpt2)\n"
-            "  o200k_base   - GPT-4o models\n"
-        );
+        // File scoring options (only used when selection is 'scoring')
+        auto scoringGroup = app.add_option_group("Scoring Options");
+        
+        // Project structure weights
+        scoringGroup->add_option("--root-files-weight", options.scoringConfig.rootFilesWeight, 
+                               "Weight for root-level files (default: 0.9)");
+        scoringGroup->add_option("--top-level-dirs-weight", options.scoringConfig.topLevelDirsWeight, 
+                               "Weight for top-level directories (default: 0.8)");
+        scoringGroup->add_option("--entry-points-weight", options.scoringConfig.entryPointsWeight, 
+                               "Weight for entry point files (default: 0.8)");
+        scoringGroup->add_option("--dependency-graph-weight", options.scoringConfig.dependencyGraphWeight, 
+                               "Weight for dependency graph connectivity (default: 0.7)");
+        
+        // File type weights
+        scoringGroup->add_option("--source-code-weight", options.scoringConfig.sourceCodeWeight, 
+                               "Weight for source code files (default: 0.8)");
+        scoringGroup->add_option("--config-files-weight", options.scoringConfig.configFilesWeight, 
+                               "Weight for configuration files (default: 0.7)");
+        scoringGroup->add_option("--documentation-weight", options.scoringConfig.documentationWeight, 
+                               "Weight for documentation files (default: 0.6)");
+        scoringGroup->add_option("--test-files-weight", options.scoringConfig.testFilesWeight, 
+                               "Weight for test files (default: 0.5)");
+        
+        // Recency weights
+        scoringGroup->add_option("--recent-files-weight", options.scoringConfig.recentlyModifiedWeight, 
+                               "Weight for recently modified files (default: 0.7)");
+        scoringGroup->add_option("--recent-time-window", options.scoringConfig.recentTimeWindowDays, 
+                               "Window in days for recent files (default: 7)");
+        
+        // File size weights
+        scoringGroup->add_option("--file-size-weight", options.scoringConfig.fileSizeWeight, 
+                               "Weight for file size (inverse, smaller files score higher) (default: 0.4)");
+        scoringGroup->add_option("--large-file-threshold", options.scoringConfig.largeFileThreshold, 
+                               "Threshold in bytes for large files (default: 1000000)");
+        
+        // Code density
+        scoringGroup->add_option("--code-density-weight", options.scoringConfig.codeDensityWeight, 
+                               "Weight for code density (default: 0.5)");
+        
+        // Inclusion threshold
+        scoringGroup->add_option("--inclusion-threshold", options.scoringConfig.inclusionThreshold, 
+                               "Minimum score for file inclusion (default: 0.3)");
+        
+        // TreeSitter usage
+        scoringGroup->add_flag("--use-tree-sitter", options.scoringConfig.useTreeSitter, 
+                               "Use TreeSitter for improved parsing (default: true)");
+        
+        // Generate file scoring report
+        bool generateScoringReport = false;
+        std::string scoringReportPath;
+        scoringGroup->add_flag("--scoring-report", generateScoringReport, 
+                               "Generate file scoring report");
+        scoringGroup->add_option("--scoring-report-path", scoringReportPath, 
+                               "Path for scoring report file (default: scoring-report.json)");
+                               
+        // Only enable scoring options when scoring is selected
+        fileSelectionOpt->needs(scoringGroup);
         
         // Parse command line arguments
         CLI11_PARSE(app, argc, argv);
         
-        // Convert format string to enum
-        if (formatStr == "markdown") {
+        // Set output format
+        if (formatStr == "plain") {
+            options.format = OutputFormat::Plain;
+        } else if (formatStr == "markdown") {
             options.format = OutputFormat::Markdown;
         } else if (formatStr == "xml") {
             options.format = OutputFormat::XML;
         } else if (formatStr == "claude_xml") {
             options.format = OutputFormat::ClaudeXML;
-        } else {
-            options.format = OutputFormat::Plain;
         }
         
-        // Store include/exclude patterns
+        // Set include and exclude patterns
         options.includePatterns = includePatterns;
         options.excludePatterns = excludePatterns;
         
-        // Store tokenizer encoding
+        // Set token encoding
         if (options.countTokens) {
             options.tokenEncoding = Tokenizer::encodingFromString(tokenEncodingStr);
+        }
+        
+        // Set file selection strategy
+        if (fileSelectionStr == "scoring") {
+            options.selectionStrategy = RepomixOptions::FileSelectionStrategy::Scoring;
+        } else {
+            options.selectionStrategy = RepomixOptions::FileSelectionStrategy::All;
         }
         
         // Run repomix
@@ -103,6 +157,22 @@ int main(int argc, char** argv) {
         // If only showing token count, print that specifically
         if (options.onlyShowTokenCount && options.countTokens) {
             std::cout << repomix.getTokenCount() << std::endl;
+        }
+        
+        // Generate scoring report if requested
+        if (generateScoringReport && options.selectionStrategy == RepomixOptions::FileSelectionStrategy::Scoring) {
+            std::string reportPath = scoringReportPath.empty() ? "scoring-report.json" : scoringReportPath;
+            std::string report = repomix.getFileScoringReport();
+            
+            std::ofstream reportFile(reportPath);
+            if (reportFile) {
+                reportFile << report;
+                if (options.verbose) {
+                    std::cout << "Scoring report written to " << reportPath << std::endl;
+                }
+            } else {
+                std::cerr << "Error: Failed to write scoring report to " << reportPath << std::endl;
+            }
         }
         
         return 0;

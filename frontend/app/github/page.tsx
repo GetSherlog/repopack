@@ -147,7 +147,7 @@ export default function GitHubPage() {
 
         {result && !isProcessing ? (
           <ResultDisplay 
-            result={result} 
+            content={result} 
             tokenCount={tokenCount}
             tokenizer={tokenizer}
           />

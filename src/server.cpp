@@ -151,6 +151,7 @@ public:
     ADD_METHOD_TO(ApiController::processSharedDir, "/api/process_shared", drogon::Post);
     ADD_METHOD_TO(ApiController::getCapabilities, "/api/capabilities", drogon::Get);
     ADD_METHOD_TO(ApiController::getContentFile, "/api/content/{filename}", drogon::Get);
+    ADD_METHOD_TO(ApiController::getScoringReport, "/api/scoring_report", drogon::Post);
     METHOD_LIST_END
 
     void processFiles(const drogon::HttpRequestPtr& req, 
@@ -641,63 +642,73 @@ public:
 
     void getCapabilities(const drogon::HttpRequestPtr& req, 
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-        json capabilities;
-        capabilities["version"] = "1.0.0";
-        capabilities["formats"] = json::array({"plain", "markdown", "xml", "claude_xml"});
-        capabilities["features"] = json::array({"file_upload", "github_repo", "timing_info"});
+        Json::Value result;
+        result["success"] = true;
         
-        // Add summarization features
-        json summarizationFeatures;
-        summarizationFeatures["enabled"] = true;
-        summarizationFeatures["options"] = {
-            {"includeFirstNLines", true},
-            {"firstNLinesCount", 50},
-            {"includeSignatures", true},
-            {"includeDocstrings", true},
-            {"includeSnippets", true},
-            {"snippetsCount", 3},
-            {"includeReadme", true},
-            {"useTreeSitter", true},
-            {"fileSizeThreshold", 10240},
-            {"maxSummaryLines", 200}
-        };
+        // API version
+        result["api_version"] = "1.0.0";
         
-        capabilities["summarization"] = summarizationFeatures;
+        // Basic capabilities
+        result["capabilities"] = Json::Value(Json::arrayValue);
+        result["capabilities"].append("file_upload");
+        result["capabilities"].append("directory_upload");
+        result["capabilities"].append("github_repo");
+        result["capabilities"].append("shared_directory");
+        result["capabilities"].append("token_counting");
+        result["capabilities"].append("file_scoring");
         
-        // Convert nlohmann::json to Json::Value for Drogon
-        Json::Value drogonJson;
-        drogonJson["version"] = capabilities["version"].get<std::string>();
+        // Supported formats
+        result["formats"] = Json::Value(Json::arrayValue);
+        result["formats"].append("plain");
+        result["formats"].append("markdown");
+        result["formats"].append("xml");
+        result["formats"].append("claude_xml");
         
-        // Add formats array
-        Json::Value formatsArray;
-        for (const auto& format : capabilities["formats"]) {
-            formatsArray.append(format.get<std::string>());
-        }
-        drogonJson["formats"] = formatsArray;
+        // Supported tokenizers
+        result["tokenizers"] = Json::Value(Json::arrayValue);
+        result["tokenizers"].append("cl100k_base");
+        result["tokenizers"].append("p50k_base");
+        result["tokenizers"].append("r50k_base");
         
-        // Add features array
-        Json::Value featuresArray;
-        for (const auto& feature : capabilities["features"]) {
-            featuresArray.append(feature.get<std::string>());
-        }
-        drogonJson["features"] = featuresArray;
+        // File selection strategies
+        result["file_selection_strategies"] = Json::Value(Json::arrayValue);
+        result["file_selection_strategies"].append("all");
+        result["file_selection_strategies"].append("scoring");
         
-        // Add summarization features
-        Json::Value summaryJson;
-        summaryJson["enabled"] = summarizationFeatures["enabled"].get<bool>();
+        // File scoring parameters
+        Json::Value scoringParams;
+        // Project structure weights
+        scoringParams["root_files_weight"] = 0.9;
+        scoringParams["top_level_dirs_weight"] = 0.8;
+        scoringParams["entry_points_weight"] = 0.8;
+        scoringParams["dependency_graph_weight"] = 0.7;
         
-        Json::Value optionsJson;
-        for (const auto& [key, value] : summarizationFeatures["options"].items()) {
-            if (value.is_boolean()) {
-                optionsJson[key] = value.get<bool>();
-            } else if (value.is_number_integer()) {
-                optionsJson[key] = value.get<int>();
-            }
-        }
-        summaryJson["options"] = optionsJson;
-        drogonJson["summarization"] = summaryJson;
+        // File type weights
+        scoringParams["source_code_weight"] = 0.8;
+        scoringParams["config_files_weight"] = 0.7;
+        scoringParams["documentation_weight"] = 0.6;
+        scoringParams["test_files_weight"] = 0.5;
         
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonJson);
+        // Recency weights
+        scoringParams["recently_modified_weight"] = 0.7;
+        scoringParams["recent_time_window_days"] = 7;
+        
+        // File size weights
+        scoringParams["file_size_weight"] = 0.4;
+        scoringParams["large_file_threshold"] = 1000000;
+        
+        // Code density
+        scoringParams["code_density_weight"] = 0.5;
+        
+        // Threshold
+        scoringParams["inclusion_threshold"] = 0.3;
+        
+        result["file_scoring"] = scoringParams;
+        
+        // Max content size
+        result["max_content_size_bytes"] = 10 * 1024 * 1024; // 10MB
+        
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(result);
         callback(resp);
     }
 
@@ -778,6 +789,17 @@ public:
                 }
             }
             
+            // Check for file selection strategy parameter
+            if (params.find("file_selection") != params.end()) {
+                std::string selectionStrategy = params.at("file_selection");
+                if (selectionStrategy == "scoring") {
+                    options.selectionStrategy = RepomixOptions::FileSelectionStrategy::Scoring;
+                    
+                    // Load scoring config from parameters if provided
+                    configureFileScoringFromParams(options.scoringConfig, req);
+                }
+            }
+            
             // Process the directory
             Repomix repomix(options);
             bool success = repomix.run();
@@ -792,6 +814,73 @@ public:
             if (success) {
                 std::string outputContent = repomix.getOutput();
                 drogonResult["content"] = outputContent;
+                
+                // Add scoring report if scoring was used
+                if (options.selectionStrategy == RepomixOptions::FileSelectionStrategy::Scoring) {
+                    try {
+                        std::string scoringReport = repomix.getFileScoringReport();
+                        // Convert nlohmann::json to Drogon's Json::Value
+                        auto nlohmannJson = json::parse(scoringReport);
+                        
+                        // Create a Drogon JSON object for the scoring report
+                        Json::Value scoringJson;
+                        
+                        // Add summary data
+                        if (nlohmannJson.contains("summary")) {
+                            auto& summary = nlohmannJson["summary"];
+                            scoringJson["summary"]["total_files"] = summary["total_files"].get<int>();
+                            scoringJson["summary"]["included_files"] = summary["included_files"].get<int>();
+                            scoringJson["summary"]["inclusion_percentage"] = summary["inclusion_percentage"].get<float>();
+                        }
+                        
+                        // Add config data
+                        if (nlohmannJson.contains("config")) {
+                            auto& config = nlohmannJson["config"];
+                            for (auto it = config.begin(); it != config.end(); ++it) {
+                                if (it->is_number_float()) {
+                                    scoringJson["config"][it.key()] = it->get<float>();
+                                } else if (it->is_number_integer()) {
+                                    scoringJson["config"][it.key()] = it->get<int>();
+                                } else if (it->is_boolean()) {
+                                    scoringJson["config"][it.key()] = it->get<bool>();
+                                }
+                            }
+                        }
+                        
+                        // Add file data (limited to top 20 files to avoid response size issues)
+                        if (nlohmannJson.contains("files") && nlohmannJson["files"].is_array()) {
+                            auto& files = nlohmannJson["files"];
+                            int fileCount = 0;
+                            Json::Value filesArray(Json::arrayValue);
+                            
+                            for (const auto& file : files) {
+                                if (fileCount++ >= 20) break; // Limit to 20 files
+                                
+                                Json::Value fileObj;
+                                fileObj["path"] = file["path"].get<std::string>();
+                                fileObj["score"] = file["score"].get<float>();
+                                fileObj["included"] = file["included"].get<bool>();
+                                
+                                // Add component scores
+                                if (file.contains("components")) {
+                                    for (auto it = file["components"].begin(); it != file["components"].end(); ++it) {
+                                        fileObj["components"][it.key()] = it->get<float>();
+                                    }
+                                }
+                                
+                                filesArray.append(fileObj);
+                            }
+                            
+                            scoringJson["files"] = filesArray;
+                            scoringJson["files_count"] = fileCount;
+                            scoringJson["total_files_count"] = static_cast<int>(files.size());
+                        }
+                        
+                        drogonResult["scoring_report"] = scoringJson;
+                    } catch (const std::exception& e) {
+                        std::cerr << "Error generating scoring report: " << e.what() << std::endl;
+                    }
+                }
             } else {
                 drogonResult["error"] = "Failed to process directory";
             }
@@ -1353,6 +1442,341 @@ public:
         resp->addHeader("Access-Control-Allow-Methods", "GET");
         callback(resp);
     }
+
+    // Endpoint to get file scoring report
+    void getScoringReport(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        Json::Value drogonResult;
+        auto startTime = std::chrono::steady_clock::now();
+        
+        std::cout << "Getting file scoring report" << std::endl;
+        
+        try {
+            // Parse request parameters
+            auto jsonBody = req->getJsonObject();
+            if (!jsonBody) {
+                drogonResult["success"] = false;
+                drogonResult["error"] = "Invalid JSON body";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
+                resp->setStatusCode(drogon::k400BadRequest);
+                callback(resp);
+                return;
+            }
+            
+            // Create a temp directory for processing
+            std::string tempDir = createTempDir();
+            std::cout << "Created temp directory: " << tempDir << std::endl;
+            
+            // Check if we're processing a directory path or files
+            std::string directoryPath;
+            bool useSharedDir = false;
+            
+            // Check for directory path in request
+            if (jsonBody->isMember("directory") && (*jsonBody)["directory"].isString()) {
+                directoryPath = (*jsonBody)["directory"].asString();
+                std::cout << "Using specified directory path: " << directoryPath << std::endl;
+                
+                // Validate directory exists
+                if (!fs::exists(directoryPath) || !fs::is_directory(directoryPath)) {
+                    drogonResult["success"] = false;
+                    drogonResult["error"] = "Directory not found: " + directoryPath;
+                    auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
+                    resp->setStatusCode(drogon::k404NotFound);
+                    cleanupTempDir(tempDir);
+                    callback(resp);
+                    return;
+                }
+            } 
+            // Check for shared directory flag
+            else if (jsonBody->isMember("use_shared_dir") && (*jsonBody)["use_shared_dir"].asBool()) {
+                directoryPath = SHARED_DIRECTORY;
+                useSharedDir = true;
+                std::cout << "Using shared directory: " << directoryPath << std::endl;
+                
+                // Validate shared directory exists
+                if (!fs::exists(directoryPath) || !fs::is_directory(directoryPath)) {
+                    drogonResult["success"] = false;
+                    drogonResult["error"] = "Shared directory not found or not a directory";
+                    auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
+                    resp->setStatusCode(drogon::k500InternalServerError);
+                    cleanupTempDir(tempDir);
+                    callback(resp);
+                    return;
+                }
+            }
+            else {
+                // No directory specified
+                drogonResult["success"] = false;
+                drogonResult["error"] = "No directory specified. Use 'directory' or 'use_shared_dir' parameter.";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
+                resp->setStatusCode(drogon::k400BadRequest);
+                cleanupTempDir(tempDir);
+                callback(resp);
+                return;
+            }
+            
+            // Initialize options
+            RepomixOptions options;
+            options.inputDir = directoryPath;
+            options.selectionStrategy = RepomixOptions::FileSelectionStrategy::Scoring;
+            
+            // Configure scoring options from request if provided
+            if (jsonBody->isMember("scoring_config") && (*jsonBody)["scoring_config"].isObject()) {
+                auto& scoringConfig = (*jsonBody)["scoring_config"];
+                
+                // Project structure weights
+                if (scoringConfig.isMember("root_files_weight") && scoringConfig["root_files_weight"].isDouble()) {
+                    options.scoringConfig.rootFilesWeight = scoringConfig["root_files_weight"].asFloat();
+                }
+                if (scoringConfig.isMember("top_level_dirs_weight") && scoringConfig["top_level_dirs_weight"].isDouble()) {
+                    options.scoringConfig.topLevelDirsWeight = scoringConfig["top_level_dirs_weight"].asFloat();
+                }
+                if (scoringConfig.isMember("entry_points_weight") && scoringConfig["entry_points_weight"].isDouble()) {
+                    options.scoringConfig.entryPointsWeight = scoringConfig["entry_points_weight"].asFloat();
+                }
+                if (scoringConfig.isMember("dependency_graph_weight") && scoringConfig["dependency_graph_weight"].isDouble()) {
+                    options.scoringConfig.dependencyGraphWeight = scoringConfig["dependency_graph_weight"].asFloat();
+                }
+                
+                // File type weights
+                if (scoringConfig.isMember("source_code_weight") && scoringConfig["source_code_weight"].isDouble()) {
+                    options.scoringConfig.sourceCodeWeight = scoringConfig["source_code_weight"].asFloat();
+                }
+                if (scoringConfig.isMember("config_files_weight") && scoringConfig["config_files_weight"].isDouble()) {
+                    options.scoringConfig.configFilesWeight = scoringConfig["config_files_weight"].asFloat();
+                }
+                if (scoringConfig.isMember("documentation_weight") && scoringConfig["documentation_weight"].isDouble()) {
+                    options.scoringConfig.documentationWeight = scoringConfig["documentation_weight"].asFloat();
+                }
+                if (scoringConfig.isMember("test_files_weight") && scoringConfig["test_files_weight"].isDouble()) {
+                    options.scoringConfig.testFilesWeight = scoringConfig["test_files_weight"].asFloat();
+                }
+                
+                // Recency weights
+                if (scoringConfig.isMember("recently_modified_weight") && scoringConfig["recently_modified_weight"].isDouble()) {
+                    options.scoringConfig.recentlyModifiedWeight = scoringConfig["recently_modified_weight"].asFloat();
+                }
+                if (scoringConfig.isMember("recent_time_window_days") && scoringConfig["recent_time_window_days"].isInt()) {
+                    options.scoringConfig.recentTimeWindowDays = scoringConfig["recent_time_window_days"].asInt();
+                }
+                
+                // File size weights
+                if (scoringConfig.isMember("file_size_weight") && scoringConfig["file_size_weight"].isDouble()) {
+                    options.scoringConfig.fileSizeWeight = scoringConfig["file_size_weight"].asFloat();
+                }
+                if (scoringConfig.isMember("large_file_threshold") && scoringConfig["large_file_threshold"].isInt()) {
+                    options.scoringConfig.largeFileThreshold = scoringConfig["large_file_threshold"].asInt64();
+                }
+                
+                // Code density weight
+                if (scoringConfig.isMember("code_density_weight") && scoringConfig["code_density_weight"].isDouble()) {
+                    options.scoringConfig.codeDensityWeight = scoringConfig["code_density_weight"].asFloat();
+                }
+                
+                // Inclusion threshold
+                if (scoringConfig.isMember("inclusion_threshold") && scoringConfig["inclusion_threshold"].isDouble()) {
+                    options.scoringConfig.inclusionThreshold = scoringConfig["inclusion_threshold"].asFloat();
+                }
+                
+                // TreeSitter usage
+                if (scoringConfig.isMember("use_tree_sitter") && scoringConfig["use_tree_sitter"].isBool()) {
+                    options.scoringConfig.useTreeSitter = scoringConfig["use_tree_sitter"].asBool();
+                }
+            }
+            
+            // Initialize Repomix with scoring
+            Repomix repomix(options);
+            
+            // Run scoring but don't generate output
+            options.onlyShowTokenCount = true; // This makes Repomix not generate full output
+            bool success = repomix.run();
+            
+            if (success) {
+                // Get the scoring report as a string
+                std::string scoringReportStr = repomix.getFileScoringReport();
+                
+                // Create a new Drogon JSON response directly
+                Json::Value result;
+                result["success"] = true;
+                
+                try {
+                    // Parse the scoring report with nlohmann::json
+                    json reportJson = json::parse(scoringReportStr);
+                    
+                    // Manually extract summary data
+                    if (reportJson.contains("summary")) {
+                        Json::Value summary;
+                        summary["total_files"] = static_cast<int>(reportJson["summary"]["total_files"].get<size_t>());
+                        summary["included_files"] = static_cast<int>(reportJson["summary"]["included_files"].get<size_t>());
+                        summary["inclusion_percentage"] = reportJson["summary"]["inclusion_percentage"].get<float>();
+                        result["summary"] = summary;
+                    }
+                    
+                    // Add timing information
+                    auto endTime = std::chrono::steady_clock::now();
+                    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+                    Json::Value timing;
+                    timing["total_ms"] = static_cast<int>(duration);
+                    result["timing"] = timing;
+                    
+                    // Return the result
+                    auto resp = drogon::HttpResponse::newHttpJsonResponse(result);
+                    resp->setStatusCode(drogon::k200OK);
+                    cleanupTempDir(tempDir);
+                    callback(resp);
+                    return;
+                } catch (const std::exception& e) {
+                    result["success"] = false;
+                    result["error"] = "Error parsing scoring report: " + std::string(e.what());
+                    auto resp = drogon::HttpResponse::newHttpJsonResponse(result);
+                    resp->setStatusCode(drogon::k500InternalServerError);
+                    cleanupTempDir(tempDir);
+                    callback(resp);
+                    return;
+                }
+            } else {
+                drogonResult["success"] = false;
+                drogonResult["error"] = "Failed to run file scoring";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
+                resp->setStatusCode(drogon::k500InternalServerError);
+                cleanupTempDir(tempDir);
+                callback(resp);
+            }
+        } catch (const std::exception& e) {
+            drogonResult["success"] = false;
+            drogonResult["error"] = "Exception: " + std::string(e.what());
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
+            resp->setStatusCode(drogon::k500InternalServerError);
+            callback(resp);
+        }
+    }
+
+    // Helper function to configure file scoring from request parameters
+    void configureFileScoringFromParams(FileScoringConfig& config, const drogon::HttpRequestPtr& req) {
+        auto& params = req->getParameters();
+        
+        // Project structure weights
+        if (params.find("root_files_weight") != params.end()) {
+            config.rootFilesWeight = std::stof(params.at("root_files_weight"));
+        }
+        if (params.find("top_level_dirs_weight") != params.end()) {
+            config.topLevelDirsWeight = std::stof(params.at("top_level_dirs_weight"));
+        }
+        if (params.find("entry_points_weight") != params.end()) {
+            config.entryPointsWeight = std::stof(params.at("entry_points_weight"));
+        }
+        if (params.find("dependency_graph_weight") != params.end()) {
+            config.dependencyGraphWeight = std::stof(params.at("dependency_graph_weight"));
+        }
+        
+        // File type weights
+        if (params.find("source_code_weight") != params.end()) {
+            config.sourceCodeWeight = std::stof(params.at("source_code_weight"));
+        }
+        if (params.find("config_files_weight") != params.end()) {
+            config.configFilesWeight = std::stof(params.at("config_files_weight"));
+        }
+        if (params.find("documentation_weight") != params.end()) {
+            config.documentationWeight = std::stof(params.at("documentation_weight"));
+        }
+        if (params.find("test_files_weight") != params.end()) {
+            config.testFilesWeight = std::stof(params.at("test_files_weight"));
+        }
+        
+        // Recency weights
+        if (params.find("recently_modified_weight") != params.end()) {
+            config.recentlyModifiedWeight = std::stof(params.at("recently_modified_weight"));
+        }
+        if (params.find("recent_time_window_days") != params.end()) {
+            config.recentTimeWindowDays = std::stoi(params.at("recent_time_window_days"));
+        }
+        
+        // File size weights
+        if (params.find("file_size_weight") != params.end()) {
+            config.fileSizeWeight = std::stof(params.at("file_size_weight"));
+        }
+        if (params.find("large_file_threshold") != params.end()) {
+            config.largeFileThreshold = std::stoull(params.at("large_file_threshold"));
+        }
+        
+        // Code density
+        if (params.find("code_density_weight") != params.end()) {
+            config.codeDensityWeight = std::stof(params.at("code_density_weight"));
+        }
+        
+        // Inclusion threshold
+        if (params.find("inclusion_threshold") != params.end()) {
+            config.inclusionThreshold = std::stof(params.at("inclusion_threshold"));
+        }
+        
+        // TreeSitter usage
+        if (params.find("use_tree_sitter") != params.end()) {
+            std::string val = params.at("use_tree_sitter");
+            config.useTreeSitter = (val == "true" || val == "1");
+        }
+    }
+    
+    // Helper function to configure file scoring from JSON object
+    void configureFileScoringFromJson(FileScoringConfig& config, const Json::Value& scoringConfig) {
+        // Project structure weights
+        if (scoringConfig.isMember("root_files_weight") && scoringConfig["root_files_weight"].isDouble()) {
+            config.rootFilesWeight = scoringConfig["root_files_weight"].asFloat();
+        }
+        if (scoringConfig.isMember("top_level_dirs_weight") && scoringConfig["top_level_dirs_weight"].isDouble()) {
+            config.topLevelDirsWeight = scoringConfig["top_level_dirs_weight"].asFloat();
+        }
+        if (scoringConfig.isMember("entry_points_weight") && scoringConfig["entry_points_weight"].isDouble()) {
+            config.entryPointsWeight = scoringConfig["entry_points_weight"].asFloat();
+        }
+        if (scoringConfig.isMember("dependency_graph_weight") && scoringConfig["dependency_graph_weight"].isDouble()) {
+            config.dependencyGraphWeight = scoringConfig["dependency_graph_weight"].asFloat();
+        }
+        
+        // File type weights
+        if (scoringConfig.isMember("source_code_weight") && scoringConfig["source_code_weight"].isDouble()) {
+            config.sourceCodeWeight = scoringConfig["source_code_weight"].asFloat();
+        }
+        if (scoringConfig.isMember("config_files_weight") && scoringConfig["config_files_weight"].isDouble()) {
+            config.configFilesWeight = scoringConfig["config_files_weight"].asFloat();
+        }
+        if (scoringConfig.isMember("documentation_weight") && scoringConfig["documentation_weight"].isDouble()) {
+            config.documentationWeight = scoringConfig["documentation_weight"].asFloat();
+        }
+        if (scoringConfig.isMember("test_files_weight") && scoringConfig["test_files_weight"].isDouble()) {
+            config.testFilesWeight = scoringConfig["test_files_weight"].asFloat();
+        }
+        
+        // Recency weights
+        if (scoringConfig.isMember("recently_modified_weight") && scoringConfig["recently_modified_weight"].isDouble()) {
+            config.recentlyModifiedWeight = scoringConfig["recently_modified_weight"].asFloat();
+        }
+        if (scoringConfig.isMember("recent_time_window_days") && scoringConfig["recent_time_window_days"].isInt()) {
+            config.recentTimeWindowDays = scoringConfig["recent_time_window_days"].asInt();
+        }
+        
+        // File size weights
+        if (scoringConfig.isMember("file_size_weight") && scoringConfig["file_size_weight"].isDouble()) {
+            config.fileSizeWeight = scoringConfig["file_size_weight"].asFloat();
+        }
+        if (scoringConfig.isMember("large_file_threshold") && scoringConfig["large_file_threshold"].isInt64()) {
+            config.largeFileThreshold = scoringConfig["large_file_threshold"].asInt64();
+        }
+        
+        // Code density
+        if (scoringConfig.isMember("code_density_weight") && scoringConfig["code_density_weight"].isDouble()) {
+            config.codeDensityWeight = scoringConfig["code_density_weight"].asFloat();
+        }
+        
+        // Inclusion threshold
+        if (scoringConfig.isMember("inclusion_threshold") && scoringConfig["inclusion_threshold"].isDouble()) {
+            config.inclusionThreshold = scoringConfig["inclusion_threshold"].asFloat();
+        }
+        
+        // TreeSitter usage
+        if (scoringConfig.isMember("use_tree_sitter") && scoringConfig["use_tree_sitter"].isBool()) {
+            config.useTreeSitter = scoringConfig["use_tree_sitter"].asBool();
+        }
+    }
 };
 
 int main(int argc, char* argv[]) {
@@ -1445,7 +1869,7 @@ int main(int argc, char* argv[]) {
         // Also register the specific paths to be extra safe
         for (const auto& path : {"/api/process_files", "/api/process_repo", 
                                   "/api/process_uploaded_dir", "/api/process_shared", 
-                                  "/api/capabilities"}) {
+                                  "/api/capabilities", "/api/scoring_report"}) {
             app.registerHandler(
                 path,
                 [](const drogon::HttpRequestPtr& req,

@@ -4,6 +4,7 @@ add_library(repomix_lib STATIC
     file_processor.cpp
     pattern_matcher.cpp
     code_ner.cpp
+    file_scorer.cpp
 )
 
 # Link required libraries to the core library
@@ -28,6 +29,7 @@ add_executable(repomix
     code_ner.cpp
     server.cpp
     tokenizer.cpp
+    file_scorer.cpp
 )
 
 target_include_directories(repomix PRIVATE

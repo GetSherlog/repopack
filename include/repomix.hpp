@@ -8,6 +8,7 @@
 #include "file_processor.hpp"
 #include "pattern_matcher.hpp"
 #include "tokenizer.hpp"
+#include "file_scorer.hpp"
 
 namespace fs = std::filesystem;
 
@@ -77,6 +78,14 @@ struct RepomixOptions {
     std::string excludePatterns; // Comma-separated list of glob patterns to exclude
     SummarizationOptions summarization; // Smart summarization options
     
+    // File selection strategy
+    enum class FileSelectionStrategy {
+        All,            // Include all files (just using ignore patterns)
+        Scoring         // Use weighted scoring system to select files
+    };
+    FileSelectionStrategy selectionStrategy = FileSelectionStrategy::All;
+    FileScoringConfig scoringConfig;   // Configuration for file scoring
+    
     // Token counting options
     bool countTokens = false;                        // Flag to count tokens in the output
     TokenizerEncoding tokenEncoding = TokenizerEncoding::CL100K_BASE; // Tokenizer to use
@@ -104,12 +113,19 @@ public:
     
     // Get tokenizer encoding name
     std::string getTokenizerName() const;
+    
+    // Get file scoring report (if scoring was used)
+    std::string getFileScoringReport() const;
 
 private:
     RepomixOptions options_;
     std::unique_ptr<FileProcessor> fileProcessor_;
     std::unique_ptr<PatternMatcher> patternMatcher_;
     std::unique_ptr<Tokenizer> tokenizer_;
+    std::unique_ptr<FileScorer> fileScorer_;
+    
+    // Scored files (if scoring was used)
+    std::vector<FileScorer::ScoredFile> scoredFiles_;
     
     // Output content storage
     std::string outputContent_;
@@ -129,10 +145,15 @@ private:
     std::chrono::milliseconds processingDuration_{0};
     std::chrono::milliseconds outputDuration_{0};
     std::chrono::milliseconds tokenizationDuration_{0};
+    std::chrono::milliseconds scoringDuration_{0};
     
     // Helper methods
     void writeOutput();
     void countOutputTokens();
     std::string generateDirectoryTree(const fs::path& dir, int level = 0) const;
     std::string formatOutput(const std::vector<FileProcessor::ProcessedFile>& files) const;
+    
+    // File selection methods
+    std::vector<fs::path> selectFilesUsingScoring(const fs::path& repoPath);
+    std::vector<FileProcessor::ProcessedFile> processSelectedFiles(const std::vector<fs::path>& selectedFiles);
 };

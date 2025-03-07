@@ -2,7 +2,7 @@
 // Renamed from repomix-wasm.ts to repomix-api.ts
 
 // Type definitions for the Repomix API responses
-interface RepomixApiResponse {
+export interface RepomixApiResponse {
   success: boolean;
   content?: string;
   summary?: string;
@@ -12,6 +12,7 @@ interface RepomixApiResponse {
   contentSnippet?: string;
   tokenCount?: number;
   tokenizer?: string;
+  scoring_report?: any;
 }
 
 interface ThreadingCapabilities {
@@ -116,70 +117,62 @@ export async function isApiAvailable(): Promise<boolean> {
  * @param countTokens Optional flag to count tokens in the output
  * @param tokenEncoding Optional tokenizer encoding to use (default: cl100k_base)
  * @param tokensOnly Optional flag to only return token count without content
+ * @param fileSelection Optional file selection strategy ('all', 'scoring')
+ * @param scoringConfig Optional scoring configuration for 'scoring' strategy
  * @returns Promise with processing results
  */
 export async function processFiles(
-  files: File[], 
-  format: string = 'plain',
-  includePatterns: string = '',
-  excludePatterns: string = '',
-  countTokens: boolean = false,
-  tokenEncoding: string = 'cl100k_base',
-  tokensOnly: boolean = false
+  files: File[],
+  format: string,
+  includePatterns: string,
+  excludePatterns: string,
+  countTokens: boolean,
+  tokenEncoding: string,
+  tokensOnly: boolean,
+  fileSelection: string = 'all',
+  scoringConfig?: any
 ): Promise<RepomixApiResponse> {
-  try {
-    // Validate input
-    if (!files || files.length === 0) {
-      throw new Error('No files provided');
+  const formData = new FormData()
+  
+  // Add files to form data
+  files.forEach(file => {
+    formData.append('files', file)
+  })
+  
+  // Add other parameters
+  formData.append('format', format)
+  if (includePatterns) formData.append('include', includePatterns)
+  if (excludePatterns) formData.append('exclude', excludePatterns)
+  
+  // Add token counting options
+  if (countTokens) {
+    formData.append('count_tokens', 'true')
+    formData.append('token_encoding', tokenEncoding)
+    if (tokensOnly) {
+      formData.append('tokens_only', 'true')
     }
-    
-    // Create form data with files
-    const formData = new FormData();
-    for (let i = 0; i < files.length; i++) {
-      formData.append('file', files[i], files[i].name);
-    }
-    
-    // Add format parameter
-    formData.append('format', format);
-    
-    // Add include patterns if provided
-    if (includePatterns) {
-      formData.append('include', includePatterns);
-    }
-    
-    // Add exclude patterns if provided
-    if (excludePatterns) {
-      formData.append('exclude', excludePatterns);
-    }
-
-    // Add token counting parameters
-    if (countTokens) {
-      formData.append('count_tokens', 'true');
-      formData.append('token_encoding', tokenEncoding);
-      
-      if (tokensOnly) {
-        formData.append('tokens_only', 'true');
-      }
-    }
-    
-    // Send request to API
-    const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processFiles}`, {
-      method: 'POST',
-      body: formData,
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API request failed with status: ${response.status}`);
-    }
-    
-    // Parse and return response
-    const result = await response.json();
-    return result as RepomixApiResponse;
-    
-  } catch (error) {
-    console.error('Error processing files:', error);
-    throw error;
   }
+  
+  // Add file selection strategy
+  formData.append('file_selection', fileSelection)
+  
+  // Add scoring configuration if using scoring strategy
+  if (fileSelection === 'scoring' && scoringConfig) {
+    Object.entries(scoringConfig).forEach(([key, value]: [string, any]) => {
+      formData.append(key, value.toString())
+    })
+  }
+  
+  const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processFiles}`, {
+    method: 'POST',
+    body: formData
+  })
+  
+  if (!response.ok) {
+    throw new Error(`Server responded with status ${response.status}`)
+  }
+  
+  return await response.json()
 }
 
 /**

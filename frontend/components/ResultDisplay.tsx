@@ -3,17 +3,17 @@
 import { useState, useRef } from 'react'
 
 interface ResultDisplayProps {
-  result: string | null | undefined;
+  content: string | null | undefined;
   tokenCount?: number;
   tokenizer?: string;
 }
 
-export default function ResultDisplay({ result, tokenCount, tokenizer }: ResultDisplayProps) {
+export default function ResultDisplay({ content, tokenCount, tokenizer }: ResultDisplayProps) {
   const [copied, setCopied] = useState(false)
   const textAreaRef = useRef<HTMLTextAreaElement>(null)
   
   // Ensure we have a string value for the result
-  const displayResult = result || 'No content available';
+  const displayResult = content || 'No content available';
 
   const handleCopy = () => {
     if (textAreaRef.current) {

@@ -113,6 +113,11 @@ Repomix::Repomix(const RepomixOptions& options)
     // Set summarization options
     fileProcessor_->setSummarizationOptions(options_.summarization);
     
+    // Initialize file scorer if selection strategy is Scoring
+    if (options_.selectionStrategy == RepomixOptions::FileSelectionStrategy::Scoring) {
+        fileScorer_ = std::make_unique<FileScorer>(options_.scoringConfig);
+    }
+    
     // Initialize the tokenizer if token counting is enabled
     if (options_.countTokens) {
         tokenizer_ = std::make_unique<Tokenizer>(options_.tokenEncoding);
@@ -131,8 +136,31 @@ bool Repomix::run() {
         // Start processing timer
         auto processStart = std::chrono::steady_clock::now();
         
-        // Process directory
-        const auto files = fileProcessor_->processDirectory(options_.inputDir);
+        // Process files based on selection strategy
+        std::vector<FileProcessor::ProcessedFile> files;
+        
+        if (options_.selectionStrategy == RepomixOptions::FileSelectionStrategy::Scoring) {
+            // Start scoring timer
+            auto scoringStart = std::chrono::steady_clock::now();
+            
+            // Select files using scoring system
+            auto selectedFiles = selectFilesUsingScoring(options_.inputDir);
+            
+            // End scoring timer
+            auto scoringEnd = std::chrono::steady_clock::now();
+            scoringDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(scoringEnd - scoringStart);
+            
+            if (options_.verbose) {
+                std::cout << "Selected " << selectedFiles.size() << " files using scoring system" << std::endl;
+                std::cout << "Scoring completed in " << scoringDuration_.count() << " ms" << std::endl;
+            }
+            
+            // Process the selected files
+            files = processSelectedFiles(selectedFiles);
+        } else {
+            // Process all files using the standard method
+            files = fileProcessor_->processDirectory(options_.inputDir);
+        }
         
         // End processing timer
         auto processEnd = std::chrono::steady_clock::now();
@@ -148,48 +176,37 @@ bool Repomix::run() {
         // Start output timer
         auto outputStart = std::chrono::steady_clock::now();
         
-        // Write output
-        writeOutput();
+        // Format the output
+        outputContent_ = formatOutput(files);
+        
+        // Write to file if specified
+        if (!options_.outputFile.empty()) {
+            std::ofstream outFile(options_.outputFile);
+            if (outFile) {
+                outFile << outputContent_;
+                if (options_.verbose) {
+                    std::cout << "Output written to " << options_.outputFile << std::endl;
+                }
+            } else {
+                std::cerr << "Error: Could not open output file: " << options_.outputFile << std::endl;
+            }
+        }
         
         // End output timer
         auto outputEnd = std::chrono::steady_clock::now();
         outputDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(outputEnd - outputStart);
         
+        // Count tokens if requested
+        if (options_.countTokens) {
+            auto tokenStart = std::chrono::steady_clock::now();
+            countOutputTokens();
+            auto tokenEnd = std::chrono::steady_clock::now();
+            tokenizationDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(tokenEnd - tokenStart);
+        }
+        
         // End overall timer
         endTime_ = std::chrono::steady_clock::now();
         duration_ = std::chrono::duration_cast<std::chrono::milliseconds>(endTime_ - startTime_);
-        
-        if (options_.verbose) {
-            std::cout << "Completed in " << duration_.count() << "ms" << std::endl;
-            std::cout << "Output written to " << options_.outputFile << std::endl;
-        }
-        
-        if (options_.showTiming) {
-            std::cout << getTimingInfo() << std::endl;
-        }
-        
-        // Generate output if not in token-only mode
-        if (!options_.onlyShowTokenCount) {
-            auto outputStartTime = std::chrono::steady_clock::now();
-            
-            // Write output to file if specified
-            if (!options_.outputFile.empty()) {
-                writeOutput();
-            }
-            
-            outputDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - outputStartTime);
-        }
-        
-        // Count tokens if requested
-        if (options_.countTokens) {
-            auto tokenStartTime = std::chrono::steady_clock::now();
-            
-            countOutputTokens();
-            
-            tokenizationDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - tokenStartTime);
-        }
         
         return true;
     }
@@ -208,6 +225,9 @@ std::string Repomix::getSummary() const {
     
     if (options_.showTiming) {
         ss << "  Processing time: " << processingDuration_.count() << " ms" << std::endl;
+        if (options_.selectionStrategy == RepomixOptions::FileSelectionStrategy::Scoring) {
+            ss << "  Scoring time: " << scoringDuration_.count() << " ms" << std::endl;
+        }
         ss << "  Output generation time: " << outputDuration_.count() << " ms" << std::endl;
         if (options_.countTokens) {
             ss << "  Tokenization time: " << tokenizationDuration_.count() << " ms" << std::endl;
@@ -229,6 +249,11 @@ std::string Repomix::getTimingInfo() const {
     
     ss << "- File processing time: " << processingDuration_.count() << "ms ("
        << (processingDuration_.count() * 100 / (duration_.count() ? duration_.count() : 1)) << "%)" << std::endl;
+    
+    if (options_.selectionStrategy == RepomixOptions::FileSelectionStrategy::Scoring) {
+        ss << "- File scoring time: " << scoringDuration_.count() << "ms ("
+           << (scoringDuration_.count() * 100 / (duration_.count() ? duration_.count() : 1)) << "%)" << std::endl;
+    }
     
     ss << "- Output generation time: " << outputDuration_.count() << "ms ("
        << (outputDuration_.count() * 100 / (duration_.count() ? duration_.count() : 1)) << "%)" << std::endl;
@@ -534,4 +559,44 @@ size_t Repomix::getTokenCount() const {
 
 std::string Repomix::getTokenizerName() const {
     return tokenizer_ ? tokenizer_->getEncodingName() : "None";
+}
+
+// New method to get file scoring report
+std::string Repomix::getFileScoringReport() const {
+    if (!fileScorer_ || scoredFiles_.empty()) {
+        return "No file scoring data available.";
+    }
+    
+    return fileScorer_->getScoringReport(scoredFiles_);
+}
+
+std::vector<fs::path> Repomix::selectFilesUsingScoring(const fs::path& repoPath) {
+    if (!fileScorer_) {
+        throw std::runtime_error("File scorer not initialized");
+    }
+    
+    // Score all files in the repository
+    scoredFiles_ = fileScorer_->scoreRepository(repoPath);
+    
+    // Get selected files based on scoring
+    return fileScorer_->getSelectedFiles(scoredFiles_);
+}
+
+std::vector<FileProcessor::ProcessedFile> Repomix::processSelectedFiles(const std::vector<fs::path>& selectedFiles) {
+    std::vector<FileProcessor::ProcessedFile> processedFiles;
+    
+    // Process each selected file
+    for (const auto& filePath : selectedFiles) {
+        try {
+            auto processedFile = fileProcessor_->processFile(filePath);
+            processedFiles.push_back(std::move(processedFile));
+        }
+        catch (const std::exception& e) {
+            if (options_.verbose) {
+                std::cerr << "Error processing file " << filePath << ": " << e.what() << std::endl;
+            }
+        }
+    }
+    
+    return processedFiles;
 }
