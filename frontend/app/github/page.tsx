@@ -37,9 +37,13 @@ export default function GitHubPage() {
       // Import dynamically to prevent server-side rendering issues
       const { processGitRepo } = await import('@/lib/repomix-api')
       
+      // Get format from form data
+      const format = document.getElementById('format') ? 
+                    (document.getElementById('format') as HTMLSelectElement).value : 'plain';
+      
       // Process the GitHub repository with include/exclude patterns
       console.log('Calling processGitRepo with URL:', url);
-      const output = await processGitRepo(url, 'plain', includePatterns, excludePatterns);
+      const output = await processGitRepo(url, format, includePatterns, excludePatterns);
       console.log('Received API response:', output);
       
       clearInterval(interval)

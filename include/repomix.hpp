@@ -13,7 +13,8 @@ namespace fs = std::filesystem;
 enum class OutputFormat {
     Plain,
     Markdown,
-    XML
+    XML,
+    ClaudeXML
 };
 
 // Smart file summarization options

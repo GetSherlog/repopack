@@ -399,6 +399,43 @@ std::string Repomix::formatOutput(const std::vector<FileProcessor::ProcessedFile
             break;
         }
         
+        case OutputFormat::ClaudeXML: {
+            // Format for Claude according to the recommended XML structure
+            // Long-form data at the top, structured with XML tags
+            output << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+            output << "<documents>\n";
+            
+            int documentIndex = 1;
+            for (const auto& file : files) {
+                std::string relPath = fs::relative(file.path, options_.inputDir).string();
+                
+                output << "  <document index=\"" << documentIndex++ << "\">\n";
+                output << "    <source>" << relPath << "</source>\n";
+                output << "    <document_content>\n";
+                
+                // Apply summarization if enabled and file is large
+                if (options_.summarization.enabled && file.byteSize > options_.summarization.fileSizeThreshold) {
+                    output << fileProcessor_->summarizeFile(file);
+                } else {
+                    output << file.content;
+                }
+                
+                output << "    </document_content>\n";
+                output << "  </document>\n";
+            }
+            
+            output << "</documents>\n\n";
+            
+            // Add repository summary at the end
+            output << "Repository: " << options_.inputDir.filename().string() << "\n";
+            output << "Files: " << totalFiles_ << " | Lines: " << totalLines_ << " | Size: " << totalBytes_ << " bytes\n\n";
+            
+            // Add a starter prompt instruction for Claude
+            output << "Analyze the codebase. Identify key components, architecture, and main functionality.\n";
+            output << "When referring to specific parts of the code, please quote the relevant sections.\n";
+            break;
+        }
+        
         case OutputFormat::Plain:
         default: {
             output << "Repository Summary\n";

@@ -159,6 +159,27 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
           {showAdvanced && (
             <div className="mb-6 space-y-4 border border-gray-200 rounded-lg p-4 bg-gray-50">
               <div>
+                <label htmlFor="format" className="block text-sm font-medium text-gray-700 mb-1">
+                  Output Format
+                </label>
+                <select
+                  id="format"
+                  value={format}
+                  onChange={(e) => setFormat(e.target.value)}
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                  disabled={isProcessing}
+                >
+                  <option value="plain">Plain Text</option>
+                  <option value="markdown">Markdown</option>
+                  <option value="xml">XML</option>
+                  <option value="claude_xml">Claude XML (Optimized for Anthropic Claude)</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  Select the output format for the repository content
+                </p>
+              </div>
+              
+              <div>
                 <label htmlFor="include-patterns" className="block text-sm font-medium text-gray-700 mb-1">
                   Include patterns (comma-separated)
                 </label>

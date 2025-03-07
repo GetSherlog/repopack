@@ -87,7 +87,7 @@ export async function isApiAvailable(): Promise<boolean> {
 /**
  * Process files using the Repomix API
  * @param files Array of files to process
- * @param format Output format (plain, markdown, xml)
+ * @param format Output format (plain, markdown, xml, claude_xml)
  * @param includePatterns Optional comma-separated glob patterns to include (e.g. "*.rs,*.toml")
  * @param excludePatterns Optional comma-separated glob patterns to exclude (e.g. "*.txt,*.md")
  * @returns Promise with processing results
@@ -146,7 +146,7 @@ export async function processFiles(
 /**
  * Process a GitHub repository using the Repomix API
  * @param repoUrl URL of the GitHub repository to process
- * @param format Output format (plain, markdown, xml)
+ * @param format Output format (plain, markdown, xml, claude_xml)
  * @param includePatterns Optional comma-separated glob patterns to include (e.g. "*.rs,*.toml") 
  * @param excludePatterns Optional comma-separated glob patterns to exclude (e.g. "*.txt,*.md")
  * @returns Promise with processing results

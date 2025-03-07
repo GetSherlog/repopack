@@ -35,8 +35,12 @@ export default function UploadPage() {
       // Import dynamically to prevent server-side rendering issues
       const { processFiles } = await import('@/lib/repomix-api')
       
+      // Get format from form data
+      const formData = new FormData();
+      const format = formData.get('format') as string || 'plain';
+      
       // Process the files with include/exclude patterns
-      const output = await processFiles(files, 'plain', includePatterns, excludePatterns)
+      const output = await processFiles(files, format, includePatterns, excludePatterns)
       
       clearInterval(interval)
       setProgress(100)

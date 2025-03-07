@@ -20,8 +20,8 @@ int main(int argc, char** argv) {
         app.add_option("-o,--output", options.outputFile, "Output file (default: repomix-output.txt)");
         
         // Optional output format
-        app.add_option("-f,--format", formatStr, "Output format: plain, markdown, xml (default: plain)")
-            ->check(CLI::IsMember({"plain", "markdown", "xml"}));
+        app.add_option("-f,--format", formatStr, "Output format: plain, markdown, xml, claude_xml (default: plain)")
+            ->check(CLI::IsMember({"plain", "markdown", "xml", "claude_xml"}));
         
         // Optional include patterns
         app.add_option("--include", includePatterns, 
@@ -49,6 +49,8 @@ int main(int argc, char** argv) {
             options.format = OutputFormat::Markdown;
         } else if (formatStr == "xml") {
             options.format = OutputFormat::XML;
+        } else if (formatStr == "claude_xml") {
+            options.format = OutputFormat::ClaudeXML;
         } else {
             options.format = OutputFormat::Plain;
         }

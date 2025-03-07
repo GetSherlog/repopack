@@ -360,7 +360,9 @@ public:
             RepomixOptions options;
             options.inputDir = tempDir;
             options.format = formatStr == "markdown" ? OutputFormat::Markdown : 
-                             formatStr == "xml" ? OutputFormat::XML : OutputFormat::Plain;
+                             formatStr == "xml" ? OutputFormat::XML :
+                             formatStr == "claude_xml" ? OutputFormat::ClaudeXML :
+                             OutputFormat::Plain;
             options.verbose = verbose;
             options.showTiming = showTiming;
             options.summarization = summarizationOptions;  // Set summarization options
@@ -509,6 +511,8 @@ public:
                 options.format = OutputFormat::Markdown;
             } else if (format == "xml") {
                 options.format = OutputFormat::XML;
+            } else if (format == "claude_xml") {
+                options.format = OutputFormat::ClaudeXML;
             } else {
                 options.format = OutputFormat::Plain;
             }
@@ -639,7 +643,7 @@ public:
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
         json capabilities;
         capabilities["version"] = "1.0.0";
-        capabilities["formats"] = json::array({"plain", "markdown", "xml"});
+        capabilities["formats"] = json::array({"plain", "markdown", "xml", "claude_xml"});
         capabilities["features"] = json::array({"file_upload", "github_repo", "timing_info"});
         
         // Add summarization features
@@ -769,6 +773,8 @@ public:
                     options.format = OutputFormat::Markdown;
                 } else if (format == "xml") {
                     options.format = OutputFormat::XML;
+                } else if (format == "claude_xml") {
+                    options.format = OutputFormat::ClaudeXML;
                 }
             }
             
@@ -862,6 +868,10 @@ public:
                     format = OutputFormat::Markdown;
                 } else if (formatStr == "xml") {
                     format = OutputFormat::XML;
+                } else if (formatStr == "claude_xml") {
+                    format = OutputFormat::ClaudeXML;
+                } else {
+                    format = OutputFormat::Plain;
                 }
             }
             
