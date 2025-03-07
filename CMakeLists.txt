@@ -41,6 +41,58 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json)
 
+# tiktoken-rs for tokenization
+option(USE_TIKTOKEN "Enable tiktoken for token counting" ON)
+if(USE_TIKTOKEN)
+    # Check for Rust and Cargo
+    find_program(CARGO_EXECUTABLE cargo)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR "Cargo not found. Please install Rust and Cargo to build tiktoken-rs.")
+    endif()
+    
+    # Set up directory for tiktoken-cpp binding
+    set(TIKTOKEN_DIR ${CMAKE_BINARY_DIR}/tiktoken)
+    file(MAKE_DIRECTORY ${TIKTOKEN_DIR})
+    
+    # Clone tiktoken-rs
+    execute_process(
+        COMMAND git clone https://github.com/openai/tiktoken-rs.git ${TIKTOKEN_DIR}
+        RESULT_VARIABLE TIKTOKEN_CLONE_RESULT
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    
+    if(NOT TIKTOKEN_CLONE_RESULT EQUAL 0)
+        message(STATUS "Failed to clone tiktoken-rs, attempting to use existing directory")
+    endif()
+    
+    # Build tiktoken C++ wrapper
+    add_custom_target(tiktoken_build ALL
+        COMMAND ${CARGO_EXECUTABLE} build --release
+        WORKING_DIRECTORY ${TIKTOKEN_DIR}
+        COMMENT "Building tiktoken-rs"
+    )
+    
+    # Create C++ binding headers
+    set(TIKTOKEN_INCLUDE_DIR ${CMAKE_BINARY_DIR}/include)
+    file(MAKE_DIRECTORY ${TIKTOKEN_INCLUDE_DIR})
+    configure_file(
+        ${PROJECT_SOURCE_DIR}/src/tiktoken_cpp.hpp.in
+        ${TIKTOKEN_INCLUDE_DIR}/tiktoken_cpp.hpp
+        @ONLY
+    )
+    
+    # Set up tiktoken lib and include paths
+    set(TIKTOKEN_LIB_DIR ${TIKTOKEN_DIR}/target/release)
+    if(WIN32)
+        set(TIKTOKEN_LIB ${TIKTOKEN_LIB_DIR}/tiktoken.lib)
+    else()
+        set(TIKTOKEN_LIB ${TIKTOKEN_LIB_DIR}/libtiktoken.a)
+    endif()
+    
+    include_directories(${TIKTOKEN_INCLUDE_DIR})
+    add_compile_definitions(USE_TIKTOKEN)
+endif()
+
 # Find system libraries
 find_package(Drogon REQUIRED)
 find_package(jsoncpp REQUIRED)

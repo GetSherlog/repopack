@@ -7,6 +7,7 @@
 #include <chrono>
 #include "file_processor.hpp"
 #include "pattern_matcher.hpp"
+#include "tokenizer.hpp"
 
 namespace fs = std::filesystem;
 
@@ -75,6 +76,11 @@ struct RepomixOptions {
     std::string includePatterns; // Comma-separated list of glob patterns to include
     std::string excludePatterns; // Comma-separated list of glob patterns to exclude
     SummarizationOptions summarization; // Smart summarization options
+    
+    // Token counting options
+    bool countTokens = false;                        // Flag to count tokens in the output
+    TokenizerEncoding tokenEncoding = TokenizerEncoding::CL100K_BASE; // Tokenizer to use
+    bool onlyShowTokenCount = false;                 // Only display token count without generating the full output
 };
 
 class Repomix {
@@ -92,14 +98,24 @@ public:
     
     // Get the output content directly (useful for WASM)
     std::string getOutput() const;
+    
+    // Get token count of the output
+    size_t getTokenCount() const;
+    
+    // Get tokenizer encoding name
+    std::string getTokenizerName() const;
 
 private:
     RepomixOptions options_;
     std::unique_ptr<FileProcessor> fileProcessor_;
     std::unique_ptr<PatternMatcher> patternMatcher_;
+    std::unique_ptr<Tokenizer> tokenizer_;
     
     // Output content storage
     std::string outputContent_;
+    
+    // Token count
+    size_t tokenCount_ = 0;
     
     // Statistics
     size_t totalFiles_ = 0;
@@ -112,9 +128,11 @@ private:
     std::chrono::milliseconds duration_{0};
     std::chrono::milliseconds processingDuration_{0};
     std::chrono::milliseconds outputDuration_{0};
+    std::chrono::milliseconds tokenizationDuration_{0};
     
     // Helper methods
     void writeOutput();
+    void countOutputTokens();
     std::string generateDirectoryTree(const fs::path& dir, int level = 0) const;
     std::string formatOutput(const std::vector<FileProcessor::ProcessedFile>& files) const;
 };

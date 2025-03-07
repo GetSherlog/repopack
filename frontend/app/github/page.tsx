@@ -14,13 +14,25 @@ export default function GitHubPage() {
   const [result, setResult] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [repoUrl, setRepoUrl] = useState<string>('')
+  const [tokenCount, setTokenCount] = useState<number | undefined>(undefined)
+  const [tokenizer, setTokenizer] = useState<string | undefined>(undefined)
 
-  const handleRepoSubmit = async (url: string, includePatterns: string, excludePatterns: string) => {
+  const handleRepoSubmit = async (
+    url: string, 
+    includePatterns: string, 
+    excludePatterns: string,
+    format: string,
+    countTokens: boolean,
+    tokenEncoding: string,
+    tokensOnly: boolean
+  ) => {
     setRepoUrl(url)
     setIsProcessing(true)
     setProgress(0)
     setResult(null)
     setError(null)
+    setTokenCount(undefined)
+    setTokenizer(undefined)
 
     try {
       // Use our progress simulator
@@ -37,13 +49,17 @@ export default function GitHubPage() {
       // Import dynamically to prevent server-side rendering issues
       const { processGitRepo } = await import('@/lib/repomix-api')
       
-      // Get format from form data
-      const format = document.getElementById('format') ? 
-                    (document.getElementById('format') as HTMLSelectElement).value : 'plain';
-      
-      // Process the GitHub repository with include/exclude patterns
+      // Process the GitHub repository with all options
       console.log('Calling processGitRepo with URL:', url);
-      const output = await processGitRepo(url, format, includePatterns, excludePatterns);
+      const output = await processGitRepo(
+        url, 
+        format, 
+        includePatterns, 
+        excludePatterns,
+        countTokens,
+        tokenEncoding,
+        tokensOnly
+      );
       console.log('Received API response:', output);
       
       clearInterval(interval)
@@ -54,8 +70,16 @@ export default function GitHubPage() {
         throw new Error(output.error || 'Failed to process repository');
       }
       
-      // Make sure we have content
-      if (!output.content && !output.contentInFile) {
+      // Set token count information if available
+      if (countTokens && output.tokenCount !== undefined) {
+        setTokenCount(output.tokenCount);
+        setTokenizer(output.tokenizer);
+      }
+      
+      // Make sure we have content (unless tokensOnly is true)
+      if (tokensOnly) {
+        setResult('Token counting complete. No content was generated as requested.');
+      } else if (!output.content && !output.contentInFile) {
         console.warn('No content returned from API');
         // Use placeholder content if none returned
         setResult('Repository processed successfully, but no content was returned.');
@@ -98,41 +122,37 @@ export default function GitHubPage() {
       <div className="max-w-5xl mx-auto">
         <div className="mb-8 flex items-center">
           <Link href="/" className="text-primary-600 hover:text-primary-800 flex items-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
-              <path d="M19 12H5M12 19l-7-7 7-7" />
+            <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            Back to home
+            Back to Home
           </Link>
-          <h1 className="text-3xl font-bold ml-auto mr-auto">GitHub Repository</h1>
-          <div className="w-24"></div> {/* Spacer for alignment */}
         </div>
 
-        {!result && (
-          <GitHubForm 
-            onRepoSubmit={handleRepoSubmit}
-            isProcessing={isProcessing}
-          />
-        )}
-
-        {isProcessing && (
-          <ProcessingStatus progress={progress} />
-        )}
+        <h1 className="text-3xl font-bold mb-8">Process GitHub Repository</h1>
 
         {error && (
-          <div className="mt-8 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            <h3 className="font-semibold mb-2">Error</h3>
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
+            <p className="font-medium">Error</p>
             <p>{error}</p>
           </div>
         )}
 
-        {result && (
-          <>
-            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <h3 className="font-semibold mb-2">Repository Processed</h3>
-              <p className="break-all">{repoUrl}</p>
-            </div>
-            <ResultDisplay result={result} />
-          </>
+        {isProcessing && (
+          <ProcessingStatus 
+            progress={progress}
+            message={`Processing repository: ${repoUrl}`}
+          />
+        )}
+
+        {result && !isProcessing ? (
+          <ResultDisplay 
+            result={result} 
+            tokenCount={tokenCount}
+            tokenizer={tokenizer}
+          />
+        ) : (
+          <GitHubForm onRepoSubmit={handleRepoSubmit} isProcessing={isProcessing} />
         )}
       </div>
     </main>

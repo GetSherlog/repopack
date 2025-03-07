@@ -10,6 +10,8 @@ interface RepomixApiResponse {
   contentInFile?: boolean;
   contentFilePath?: string;
   contentSnippet?: string;
+  tokenCount?: number;
+  tokenizer?: string;
 }
 
 interface ThreadingCapabilities {
@@ -21,6 +23,18 @@ interface ThreadingCapabilities {
 // Extend the File interface to add our custom properties
 interface RepoFile extends File {
   __repoName?: string;
+}
+
+// GitHub request body interface
+interface GitHubRequestBody {
+  repo_url: string;
+  format: string;
+  token: string;
+  include?: string;
+  exclude?: string;
+  count_tokens?: boolean;
+  token_encoding?: string;
+  tokens_only?: boolean;
 }
 
 // JSZip type definitions
@@ -41,6 +55,15 @@ declare global {
     JSZip: any; // Add JSZip to the Window interface
   }
 }
+
+// Supported tokenizer encodings
+export const TOKENIZER_ENCODINGS = [
+  { value: 'cl100k_base', label: 'cl100k_base - ChatGPT models' },
+  { value: 'p50k_base', label: 'p50k_base - Code models' },
+  { value: 'p50k_edit', label: 'p50k_edit - Edit models' },
+  { value: 'r50k_base', label: 'r50k_base - GPT-3 models (Davinci)' },
+  { value: 'o200k_base', label: 'o200k_base - GPT-4o models' }
+];
 
 // Helper function to format file size
 function formatFileSize(bytes: number): string {
@@ -85,18 +108,24 @@ export async function isApiAvailable(): Promise<boolean> {
 }
 
 /**
- * Process files using the Repomix API
+ * Process uploaded files
  * @param files Array of files to process
  * @param format Output format (plain, markdown, xml, claude_xml)
  * @param includePatterns Optional comma-separated glob patterns to include (e.g. "*.rs,*.toml")
  * @param excludePatterns Optional comma-separated glob patterns to exclude (e.g. "*.txt,*.md")
+ * @param countTokens Optional flag to count tokens in the output
+ * @param tokenEncoding Optional tokenizer encoding to use (default: cl100k_base)
+ * @param tokensOnly Optional flag to only return token count without content
  * @returns Promise with processing results
  */
 export async function processFiles(
   files: File[], 
   format: string = 'plain',
   includePatterns: string = '',
-  excludePatterns: string = ''
+  excludePatterns: string = '',
+  countTokens: boolean = false,
+  tokenEncoding: string = 'cl100k_base',
+  tokensOnly: boolean = false
 ): Promise<RepomixApiResponse> {
   try {
     // Validate input
@@ -122,6 +151,16 @@ export async function processFiles(
     if (excludePatterns) {
       formData.append('exclude', excludePatterns);
     }
+
+    // Add token counting parameters
+    if (countTokens) {
+      formData.append('count_tokens', 'true');
+      formData.append('token_encoding', tokenEncoding);
+      
+      if (tokensOnly) {
+        formData.append('tokens_only', 'true');
+      }
+    }
     
     // Send request to API
     const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processFiles}`, {
@@ -144,41 +183,33 @@ export async function processFiles(
 }
 
 /**
- * Process a GitHub repository using the Repomix API
- * @param repoUrl URL of the GitHub repository to process
+ * Process a GitHub repository
+ * @param repoUrl GitHub repository URL
  * @param format Output format (plain, markdown, xml, claude_xml)
- * @param includePatterns Optional comma-separated glob patterns to include (e.g. "*.rs,*.toml") 
+ * @param includePatterns Optional comma-separated glob patterns to include (e.g. "*.rs,*.toml")
  * @param excludePatterns Optional comma-separated glob patterns to exclude (e.g. "*.txt,*.md")
+ * @param countTokens Optional flag to count tokens in the output
+ * @param tokenEncoding Optional tokenizer encoding to use (default: cl100k_base)
+ * @param tokensOnly Optional flag to only return token count without content
  * @returns Promise with processing results
  */
 export async function processGitRepo(
   repoUrl: string, 
   format: string = 'plain',
   includePatterns: string = '',
-  excludePatterns: string = ''
+  excludePatterns: string = '',
+  countTokens: boolean = false,
+  tokenEncoding: string = 'cl100k_base',
+  tokensOnly: boolean = false
 ): Promise<RepomixApiResponse> {
   try {
-    // Validate input
-    if (!repoUrl) {
-      throw new Error('No repository URL provided');
-    }
-
-    console.log(`Processing GitHub repository: ${repoUrl}`);
-    
-    // Get GitHub token from localStorage if available
     const token = localStorage.getItem('githubToken') || '';
     
-    // Create request body with URL, format, and patterns
-    const requestBody: {
-      repoUrl: string;
-      format: string;
-      token: string;
-      include?: string;
-      exclude?: string;
-    } = {
-      repoUrl,
-      format,
-      token
+    // Prepare the request body
+    const requestBody: GitHubRequestBody = {
+      repo_url: repoUrl,
+      format: format,
+      token: token
     };
     
     // Add include patterns if provided
@@ -191,6 +222,16 @@ export async function processGitRepo(
       requestBody.exclude = excludePatterns;
     }
 
+    // Add token counting parameters
+    if (countTokens) {
+      requestBody.count_tokens = true;
+      requestBody.token_encoding = tokenEncoding;
+      
+      if (tokensOnly) {
+        requestBody.tokens_only = true;
+      }
+    }
+    
     // Send request to API
     const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processGitRepo}`, {
       method: 'POST',

@@ -112,6 +112,11 @@ Repomix::Repomix(const RepomixOptions& options)
     
     // Set summarization options
     fileProcessor_->setSummarizationOptions(options_.summarization);
+    
+    // Initialize the tokenizer if token counting is enabled
+    if (options_.countTokens) {
+        tokenizer_ = std::make_unique<Tokenizer>(options_.tokenEncoding);
+    }
 }
 
 bool Repomix::run() {
@@ -163,6 +168,29 @@ bool Repomix::run() {
             std::cout << getTimingInfo() << std::endl;
         }
         
+        // Generate output if not in token-only mode
+        if (!options_.onlyShowTokenCount) {
+            auto outputStartTime = std::chrono::steady_clock::now();
+            
+            // Write output to file if specified
+            if (!options_.outputFile.empty()) {
+                writeOutput();
+            }
+            
+            outputDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - outputStartTime);
+        }
+        
+        // Count tokens if requested
+        if (options_.countTokens) {
+            auto tokenStartTime = std::chrono::steady_clock::now();
+            
+            countOutputTokens();
+            
+            tokenizationDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - tokenStartTime);
+        }
+        
         return true;
     }
     catch (const std::exception& e) {
@@ -173,10 +201,24 @@ bool Repomix::run() {
 
 std::string Repomix::getSummary() const {
     std::stringstream ss;
-    ss << "Repository Summary:" << std::endl;
-    ss << "- Total files: " << totalFiles_ << std::endl;
-    ss << "- Total lines: " << totalLines_ << std::endl;
-    ss << "- Total bytes: " << totalBytes_ << std::endl;
+    ss << "Repository processing summary:" << std::endl;
+    ss << "  Total files: " << totalFiles_ << std::endl;
+    ss << "  Total lines: " << totalLines_ << std::endl;
+    ss << "  Total bytes: " << totalBytes_ << " bytes" << std::endl;
+    
+    if (options_.showTiming) {
+        ss << "  Processing time: " << processingDuration_.count() << " ms" << std::endl;
+        ss << "  Output generation time: " << outputDuration_.count() << " ms" << std::endl;
+        if (options_.countTokens) {
+            ss << "  Tokenization time: " << tokenizationDuration_.count() << " ms" << std::endl;
+        }
+        ss << "  Total time: " << duration_.count() << " ms" << std::endl;
+    }
+    
+    if (options_.countTokens) {
+        ss << "  Token count (" << getTokenizerName() << "): " << tokenCount_ << std::endl;
+    }
+    
     return ss.str();
 }
 
@@ -476,4 +518,20 @@ std::string Repomix::formatOutput(const std::vector<FileProcessor::ProcessedFile
 // Get the output content directly (useful for WASM)
 std::string Repomix::getOutput() const {
     return outputContent_;
+}
+
+void Repomix::countOutputTokens() {
+    if (!tokenizer_) {
+        tokenizer_ = std::make_unique<Tokenizer>(options_.tokenEncoding);
+    }
+    
+    tokenCount_ = tokenizer_->countTokens(outputContent_);
+}
+
+size_t Repomix::getTokenCount() const {
+    return tokenCount_;
+}
+
+std::string Repomix::getTokenizerName() const {
+    return tokenizer_ ? tokenizer_->getEncodingName() : "None";
 }

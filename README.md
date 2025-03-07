@@ -15,6 +15,7 @@ repopack-cpp is a high-performance, C++-based tool designed to package the conte
 - Directory structure visualization
 - File summary statistics
 - Performance metrics and timing information
+- Token counting for LLM inputs with multiple tokenizer support
 - Web frontend with file upload and GitHub repository support
 - C++ backend server with RESTful API
 
@@ -130,10 +131,34 @@ docker-compose exec backend bash
 - `-o, --output`: Output file (default: repopack-output.txt)
 - `-f, --format`: Output format: plain, markdown, xml (default: plain)
 
+#### Token Counting Options
+- `--tokens`: Display token count of the generated prompt
+- `--tokens-only`: Only display token count without generating the full output
+- `--encoding`: Specify a tokenizer for token count (default: cl100k_base)
+  - Supported tokenizers:
+    - `cl100k_base` - ChatGPT models, text-embedding-ada-002
+    - `p50k_base` - Code models, text-davinci-002, text-davinci-003
+    - `p50k_edit` - Edit models like text-davinci-edit-001, code-davinci-edit-001
+    - `r50k_base` - GPT-3 models like davinci (alias: gpt2)
+    - `o200k_base` - GPT-4o models
+
 #### Other Options
 - `-v, --verbose`: Enable verbose output
 - `-t, --timing`: Show detailed timing information
 - `--threads`: Number of threads to use for processing (default: number of CPU cores)
+
+### Token Counting Examples
+
+```bash
+# Display token count with default cl100k tokenizer
+./build/bin/repopack --input /path/to/repository --tokens
+
+# Specify a different tokenizer
+./build/bin/repopack --input /path/to/repository --tokens --encoding=p50k_base
+
+# Only show token count without generating output
+./build/bin/repopack --input /path/to/repository --tokens-only
+```
 
 ## Performance
 

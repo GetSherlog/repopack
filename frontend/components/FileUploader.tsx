@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import SummarizationOptions, { SummarizationOptions as SummarizationOptionsType, defaultSummarizationOptions } from './SummarizationOptions'
+import { TOKENIZER_ENCODINGS } from '../lib/repomix-api'
 
 // Add type declaration for HTML input attributes
 declare module 'react' {
@@ -13,7 +14,15 @@ declare module 'react' {
 }
 
 interface FileUploaderProps {
-  onFilesUploaded: (files: File[], includePatterns: string, excludePatterns: string) => void;
+  onFilesUploaded: (
+    files: File[], 
+    includePatterns: string, 
+    excludePatterns: string,
+    format: string,
+    countTokens: boolean,
+    tokenEncoding: string,
+    tokensOnly: boolean
+  ) => void;
   isProcessing: boolean;
 }
 
@@ -24,6 +33,9 @@ export default function FileUploader({ onFilesUploaded, isProcessing }: FileUplo
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false)
   const [format, setFormat] = useState<string>('plain')
   const [summarizationOptions, setSummarizationOptions] = useState<SummarizationOptionsType>(defaultSummarizationOptions)
+  const [countTokens, setCountTokens] = useState<boolean>(false)
+  const [tokenEncoding, setTokenEncoding] = useState<string>('cl100k_base')
+  const [tokensOnly, setTokensOnly] = useState<boolean>(false)
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     // Handle folder uploads by recursively traversing the FileSystemEntry structure
@@ -43,128 +55,157 @@ export default function FileUploader({ onFilesUploaded, isProcessing }: FileUplo
     setFiles(prev => prev.filter((_, i) => i !== index))
   }
 
+  // Disable tokens-only if counting is disabled
+  useEffect(() => {
+    if (!countTokens) {
+      setTokensOnly(false)
+    }
+  }, [countTokens])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (files.length > 0) {
-      const formData = new FormData();
-      files.forEach((file) => {
-        formData.append('files', file);
-      });
-
-      formData.append('include-patterns', includePatterns);
-      formData.append('exclude-patterns', excludePatterns);
-      formData.append('format', format);
-
-      if (summarizationOptions.enabled) {
-        formData.append('summarization', JSON.stringify(summarizationOptions));
-      }
-
-      onFilesUploaded(files, includePatterns, excludePatterns);
+      // Call the onFilesUploaded function with all the options
+      onFilesUploaded(
+        files, 
+        includePatterns, 
+        excludePatterns,
+        format,
+        countTokens,
+        tokenEncoding,
+        tokensOnly
+      );
     }
   }
 
   const clearAll = () => {
-    setFiles([])
+    setFiles([]);
   }
 
   const toggleAdvanced = () => {
-    setShowAdvanced(prev => !prev)
+    setShowAdvanced(!showAdvanced);
   }
 
   return (
     <div className="mt-8">
-      <div 
-        {...getRootProps()} 
-        className={`p-8 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
-          isDragActive ? 'border-primary-500 bg-primary-50' : 'border-gray-300 hover:border-primary-400'
-        } ${files.length > 0 ? 'bg-gray-50' : ''}`}
-      >
-        <input {...getInputProps()} webkitdirectory="" directory="" />
-        
-        {files.length === 0 ? (
-          <div className="text-center">
-            <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-            </svg>
-            <p className="mt-4 text-lg font-medium text-gray-900">
-              {isDragActive ? 'Drop the files here' : 'Drag and drop files or directories here'}
-            </p>
-            <p className="mt-1 text-sm text-gray-500">
-              Or click to browse
-            </p>
-          </div>
-        ) : (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-medium text-gray-900">
-                {files.length} file{files.length !== 1 ? 's' : ''} selected
-              </h3>
-              <button 
-                type="button"
-                onClick={(e) => { e.stopPropagation(); clearAll(); }}
-                className="text-sm text-primary-600 hover:text-primary-800"
+      <h2 className="text-xl font-semibold mb-4">Upload Files</h2>
+      
+      <form onSubmit={handleSubmit}>
+        <div 
+          {...getRootProps()} 
+          className={`border-2 border-dashed rounded-lg p-10 text-center cursor-pointer transition-colors ${
+            isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+          } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          <input {...getInputProps()} />
+
+          {files.length === 0 ? (
+            <div>
+              <svg 
+                className="mx-auto h-12 w-12 text-gray-400" 
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor" 
+                aria-hidden="true"
               >
-                Clear all
+                <path 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  strokeWidth={1} 
+                  d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" 
+                />
+              </svg>
+              <p className="mt-2 text-sm text-gray-600">
+                Drag and drop files or directories here, or click to select
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                You can upload individual files or entire directories
+              </p>
+            </div>
+          ) : (
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">{files.length} files selected</h3>
+              <ul className="mt-4 max-h-60 overflow-auto text-left">
+                {files.map((file, index) => (
+                  <li key={index} className="text-sm text-gray-600 flex justify-between items-center py-1">
+                    <span className="truncate max-w-md">{file.name}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFile(index);
+                      }}
+                      className="ml-2 text-red-500 hover:text-red-700"
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  clearAll();
+                }}
+                className="mt-4 text-sm text-red-600 hover:text-red-800"
+              >
+                Clear All
               </button>
             </div>
-            <ul className="max-h-60 overflow-y-auto divide-y divide-gray-200">
-              {files.slice(0, 10).map((file, index) => (
-                <li key={`${file.name}-${index}`} className="py-2 flex justify-between">
-                  <div className="truncate flex-1">
-                    <span className="font-medium">{file.name}</span>
-                    <span className="ml-2 text-sm text-gray-500">
-                      {(file.size / 1024).toFixed(1)} KB
-                    </span>
-                  </div>
-                  <button 
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); removeFile(index); }}
-                    className="ml-2 text-sm text-red-600 hover:text-red-800"
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-              {files.length > 10 && (
-                <li className="py-2 text-sm text-gray-500">
-                  ... and {files.length - 10} more files
-                </li>
-              )}
-            </ul>
-            <p className="mt-2 text-sm text-gray-500">
-              Drag more files to add to the selection
-            </p>
-          </div>
-        )}
-      </div>
-
-      <div className="mt-6 flex flex-col">
-        <button
-          type="button"
-          onClick={toggleAdvanced}
-          className="text-sm text-primary-600 hover:text-primary-800 flex items-center self-start mb-3"
-        >
-          {showAdvanced ? (
-            <>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-              </svg>
-              Hide advanced options
-            </>
-          ) : (
-            <>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-              </svg>
-              Show advanced options
-            </>
           )}
-        </button>
+        </div>
+
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={toggleAdvanced}
+            className="text-sm font-medium text-blue-600 hover:text-blue-800 focus:outline-none"
+          >
+            {showAdvanced ? '- Hide Advanced Options' : '+ Show Advanced Options'}
+          </button>
+        </div>
 
         {showAdvanced && (
-          <div className="mb-6 space-y-4 border border-gray-200 rounded-lg p-4 bg-gray-50">
-            <div>
+          <div className="mt-4 p-4 bg-gray-50 rounded-md">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label htmlFor="includePatterns" className="block text-sm font-medium text-gray-700 mb-1">
+                  Include Patterns (optional)
+                </label>
+                <input
+                  type="text"
+                  id="includePatterns"
+                  value={includePatterns}
+                  onChange={(e) => setIncludePatterns(e.target.value)}
+                  placeholder="*.cpp,*.hpp,src/*"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Comma-separated glob patterns for files to include.
+                </p>
+              </div>
+              
+              <div>
+                <label htmlFor="excludePatterns" className="block text-sm font-medium text-gray-700 mb-1">
+                  Exclude Patterns (optional)
+                </label>
+                <input
+                  type="text"
+                  id="excludePatterns"
+                  value={excludePatterns}
+                  onChange={(e) => setExcludePatterns(e.target.value)}
+                  placeholder="node_modules/*,*.log"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Comma-separated glob patterns for files to exclude.
+                </p>
+              </div>
+            </div>
+            
+            <div className="mb-4">
               <label htmlFor="format" className="block text-sm font-medium text-gray-700 mb-1">
                 Output Format
               </label>
@@ -172,77 +213,82 @@ export default function FileUploader({ onFilesUploaded, isProcessing }: FileUplo
                 id="format"
                 value={format}
                 onChange={(e) => setFormat(e.target.value)}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                disabled={isProcessing}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="plain">Plain Text</option>
                 <option value="markdown">Markdown</option>
                 <option value="xml">XML</option>
-                <option value="claude_xml">Claude XML (Optimized for Anthropic Claude)</option>
+                <option value="claude_xml">Claude XML</option>
               </select>
-              <p className="mt-1 text-xs text-gray-500">
-                Select the output format for the repository content
-              </p>
             </div>
 
-            <div>
-              <label htmlFor="include-patterns" className="block text-sm font-medium text-gray-700 mb-1">
-                Include patterns (comma-separated)
-              </label>
-              <input
-                id="include-patterns"
-                type="text"
-                value={includePatterns}
-                onChange={(e) => setIncludePatterns(e.target.value)}
-                placeholder="*.rs,*.toml"
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                disabled={isProcessing}
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Only files matching these patterns will be processed
-              </p>
-            </div>
-            
-            <div>
-              <label htmlFor="exclude-patterns" className="block text-sm font-medium text-gray-700 mb-1">
-                Exclude patterns (comma-separated)
-              </label>
-              <input
-                id="exclude-patterns"
-                type="text"
-                value={excludePatterns}
-                onChange={(e) => setExcludePatterns(e.target.value)}
-                placeholder="*.txt,*.md"
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                disabled={isProcessing}
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Files matching these patterns will be excluded
-              </p>
+            {/* Token Counting Options */}
+            <div className="mb-4 p-4 border border-gray-200 rounded-md">
+              <h3 className="text-md font-semibold mb-2 text-gray-700">Token Counting Options</h3>
+              
+              <div className="flex items-center mb-3">
+                <input
+                  type="checkbox"
+                  id="countTokens"
+                  checked={countTokens}
+                  onChange={(e) => setCountTokens(e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="countTokens" className="ml-2 block text-sm text-gray-700">
+                  Count tokens in output
+                </label>
+              </div>
+              
+              <div className={`mb-3 ${countTokens ? '' : 'opacity-50'}`}>
+                <label htmlFor="tokenEncoding" className="block text-sm font-medium text-gray-700 mb-1">
+                  Tokenizer Encoding
+                </label>
+                <select
+                  id="tokenEncoding"
+                  value={tokenEncoding}
+                  onChange={(e) => setTokenEncoding(e.target.value)}
+                  disabled={!countTokens}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {TOKENIZER_ENCODINGS.map((encoding) => (
+                    <option key={encoding.value} value={encoding.value}>
+                      {encoding.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className={`flex items-center ${countTokens ? '' : 'opacity-50'}`}>
+                <input
+                  type="checkbox"
+                  id="tokensOnly"
+                  checked={tokensOnly}
+                  onChange={(e) => setTokensOnly(e.target.checked)}
+                  disabled={!countTokens}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="tokensOnly" className="ml-2 block text-sm text-gray-700">
+                  Only show token count (faster, no content output)
+                </label>
+              </div>
             </div>
           </div>
         )}
 
-        <div className="flex justify-end">
+        <div className="mt-6 flex justify-end">
           <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={files.length === 0 || isProcessing}
-            className={`px-6 py-2 rounded-md text-white font-medium ${
-              files.length === 0 || isProcessing
-                ? 'bg-gray-300 cursor-not-allowed'
-                : 'bg-primary-600 hover:bg-primary-700'
+            type="submit"
+            disabled={isProcessing || files.length === 0}
+            className={`px-4 py-2 rounded-md text-white ${
+              isProcessing || files.length === 0
+                ? 'bg-blue-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
             {isProcessing ? 'Processing...' : 'Process Files'}
           </button>
         </div>
-      </div>
-
-      <SummarizationOptions 
-        options={summarizationOptions}
-        onChange={setSummarizationOptions}
-      />
+      </form>
     </div>
   )
 }

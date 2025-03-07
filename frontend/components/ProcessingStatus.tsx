@@ -2,12 +2,15 @@
 
 interface ProcessingStatusProps {
   progress: number;
+  message?: string;
 }
 
-export default function ProcessingStatus({ progress }: ProcessingStatusProps) {
+export default function ProcessingStatus({ progress, message }: ProcessingStatusProps) {
   return (
     <div className="mt-8 p-6 border border-gray-200 rounded-lg bg-white">
-      <h3 className="text-lg font-medium mb-4">Processing Repository</h3>
+      <h3 className="text-lg font-medium mb-4">
+        {message || 'Processing Files'}
+      </h3>
       
       <div className="w-full bg-gray-200 rounded-full h-4 mb-4">
         <div 
@@ -55,7 +58,7 @@ export default function ProcessingStatus({ progress }: ProcessingStatusProps) {
             <svg className="h-4 w-4 mr-1 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
-            Processing files with C++ WASM module
+            Processing files with C++ backend
           </li>}
           {progress >= 80 && <li className="flex items-center">
             <svg className="h-4 w-4 mr-1 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">

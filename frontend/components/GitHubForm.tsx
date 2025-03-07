@@ -2,9 +2,18 @@
 
 import { useState, useEffect } from 'react'
 import SummarizationOptions, { SummarizationOptions as SummarizationOptionsType, defaultSummarizationOptions } from './SummarizationOptions'
+import { TOKENIZER_ENCODINGS } from '../lib/repomix-api'
 
 interface GitHubFormProps {
-  onRepoSubmit: (url: string, includePatterns: string, excludePatterns: string) => void;
+  onRepoSubmit: (
+    url: string, 
+    includePatterns: string, 
+    excludePatterns: string, 
+    format: string,
+    countTokens: boolean,
+    tokenEncoding: string,
+    tokensOnly: boolean
+  ) => void;
   isProcessing: boolean;
 }
 
@@ -19,6 +28,9 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
   const [showVerbose, setShowVerbose] = useState(false)
   const [showTiming, setShowTiming] = useState(false)
   const [format, setFormat] = useState('plain')
+  const [countTokens, setCountTokens] = useState(false)
+  const [tokenEncoding, setTokenEncoding] = useState('cl100k_base')
+  const [tokensOnly, setTokensOnly] = useState(false)
 
   // Load token from localStorage if available
   useEffect(() => {
@@ -58,195 +70,207 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
 
     setError(null)
     try {
-      const response = await fetch('/api/process_repo', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: repoUrl,
-          include_patterns: includePatterns,
-          exclude_patterns: excludePatterns,
-          token: githubToken,
-          format: format,
-          verbose: showVerbose,
-          timing: showTiming,
-          summarization: summarizationOptions.enabled ? summarizationOptions : undefined
-        }),
-      })
-
-      if (response.ok) {
-        onRepoSubmit(repoUrl, includePatterns, excludePatterns)
-      } else {
-        setError('Failed to process repository')
-      }
-    } catch (error) {
-      setError('An error occurred')
+      // Call the handler with all options
+      onRepoSubmit(
+        repoUrl, 
+        includePatterns, 
+        excludePatterns, 
+        format,
+        countTokens,
+        tokenEncoding,
+        tokensOnly
+      )
+    } catch (err: any) {
+      setError(`Error: ${err?.message || 'An unknown error occurred'}`);
     }
   }
 
   const toggleAdvanced = () => {
-    setShowAdvanced(prev => !prev)
+    setShowAdvanced(!showAdvanced)
   }
+
+  // Disable tokens-only if counting is disabled
+  useEffect(() => {
+    if (!countTokens) {
+      setTokensOnly(false)
+    }
+  }, [countTokens])
 
   return (
     <div className="mt-8">
-      <div className="bg-card p-8 rounded-lg border border-border shadow-sm">
-        <h2 className="text-xl font-semibold mb-4">Enter GitHub Repository URL</h2>
+      <h2 className="text-xl font-semibold mb-4">Process GitHub Repository</h2>
+      
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
+      
+      <form onSubmit={handleSubmit}>
+        <div className="mb-4">
+          <label htmlFor="repoUrl" className="block text-sm font-medium text-gray-700 mb-1">
+            GitHub Repository URL
+          </label>
+          <input
+            type="text"
+            id="repoUrl"
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            placeholder="https://github.com/username/repository"
+            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+        </div>
         
-        <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label htmlFor="repoUrl" className="block text-sm font-medium text-foreground mb-1">
-              Repository URL
-            </label>
-            <input
-              type="text"
-              id="repoUrl"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              placeholder="https://github.com/username/repository"
-              className="w-full px-4 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent bg-background text-foreground"
-              disabled={isProcessing}
-            />
-            {error && (
-              <p className="mt-1 text-sm text-destructive">{error}</p>
-            )}
-            <p className="mt-1 text-sm text-muted-foreground">
-              Enter the full URL to a GitHub repository
-            </p>
-          </div>
-
-          <div className="mb-4">
-            <label htmlFor="githubToken" className="block text-sm font-medium text-foreground mb-1">
-              GitHub Token (Optional)
-            </label>
-            <input
-              type="password"
-              id="githubToken"
-              value={githubToken}
-              onChange={(e) => setGithubToken(e.target.value)}
-              placeholder="ghp_xxxxxxxxx"
-              className="w-full px-4 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent bg-background text-foreground"
-              disabled={isProcessing}
-            />
-            <p className="mt-1 text-sm text-muted-foreground">
-              Provide a GitHub Personal Access Token to avoid rate limiting. Your token will be stored locally and never sent to our servers.
-            </p>
-          </div>
-          
+        <div className="mb-4">
+          <label htmlFor="githubToken" className="block text-sm font-medium text-gray-700 mb-1">
+            GitHub Token (optional, for private repositories)
+          </label>
+          <input
+            type="password"
+            id="githubToken"
+            value={githubToken}
+            onChange={(e) => setGithubToken(e.target.value)}
+            placeholder="Your GitHub personal access token"
+            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Token will be stored in your browser for future use.
+          </p>
+        </div>
+        
+        <div className="mb-4">
           <button
             type="button"
             onClick={toggleAdvanced}
-            className="text-sm text-primary hover:text-primary/90 flex items-center mb-4"
+            className="text-sm font-medium text-blue-600 hover:text-blue-800 focus:outline-none"
           >
-            {showAdvanced ? (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-                Hide advanced options
-              </>
-            ) : (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                </svg>
-                Show advanced options
-              </>
-            )}
+            {showAdvanced ? '- Hide Advanced Options' : '+ Show Advanced Options'}
           </button>
-          
-          {showAdvanced && (
-            <div className="mb-6 space-y-4 border border-gray-200 rounded-lg p-4 bg-gray-50">
+        </div>
+        
+        {showAdvanced && (
+          <div className="mb-6 p-4 bg-gray-50 rounded-md">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <div>
-                <label htmlFor="format" className="block text-sm font-medium text-gray-700 mb-1">
-                  Output Format
-                </label>
-                <select
-                  id="format"
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value)}
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                  disabled={isProcessing}
-                >
-                  <option value="plain">Plain Text</option>
-                  <option value="markdown">Markdown</option>
-                  <option value="xml">XML</option>
-                  <option value="claude_xml">Claude XML (Optimized for Anthropic Claude)</option>
-                </select>
-                <p className="mt-1 text-xs text-gray-500">
-                  Select the output format for the repository content
-                </p>
-              </div>
-              
-              <div>
-                <label htmlFor="include-patterns" className="block text-sm font-medium text-gray-700 mb-1">
-                  Include patterns (comma-separated)
+                <label htmlFor="includePatterns" className="block text-sm font-medium text-gray-700 mb-1">
+                  Include Patterns (optional)
                 </label>
                 <input
-                  id="include-patterns"
                   type="text"
+                  id="includePatterns"
                   value={includePatterns}
                   onChange={(e) => setIncludePatterns(e.target.value)}
-                  placeholder="*.rs,*.toml"
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                  disabled={isProcessing}
+                  placeholder="*.cpp,*.hpp,src/*"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  Only files matching these patterns will be processed
+                  Comma-separated glob patterns for files to include.
                 </p>
               </div>
               
               <div>
-                <label htmlFor="exclude-patterns" className="block text-sm font-medium text-gray-700 mb-1">
-                  Exclude patterns (comma-separated)
+                <label htmlFor="excludePatterns" className="block text-sm font-medium text-gray-700 mb-1">
+                  Exclude Patterns (optional)
                 </label>
                 <input
-                  id="exclude-patterns"
                   type="text"
+                  id="excludePatterns"
                   value={excludePatterns}
                   onChange={(e) => setExcludePatterns(e.target.value)}
-                  placeholder="*.txt,*.md"
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                  disabled={isProcessing}
+                  placeholder="node_modules/*,*.log"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  Files matching these patterns will be excluded
+                  Comma-separated glob patterns for files to exclude.
                 </p>
               </div>
             </div>
-          )}
-
-          {/* Summarization Options */}
-          <SummarizationOptions 
-            options={summarizationOptions}
-            onChange={setSummarizationOptions}
-          />
-
-          <div className="mt-6 flex justify-end">
-            <button
-              type="submit"
-              disabled={isProcessing}
-              className={`px-6 py-2 rounded-md font-medium ${
-                isProcessing
-                  ? 'bg-muted text-muted-foreground cursor-not-allowed'
-                  : 'bg-primary text-primary-foreground hover:bg-primary/90'
-              }`}
-            >
-              {isProcessing ? 'Processing...' : 'Process Repository'}
-            </button>
+            
+            <div className="mb-4">
+              <label htmlFor="format" className="block text-sm font-medium text-gray-700 mb-1">
+                Output Format
+              </label>
+              <select
+                id="format"
+                value={format}
+                onChange={(e) => setFormat(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="plain">Plain Text</option>
+                <option value="markdown">Markdown</option>
+                <option value="xml">XML</option>
+                <option value="claude_xml">Claude XML</option>
+              </select>
+            </div>
+            
+            {/* Token Counting Options */}
+            <div className="mb-4 p-4 border border-gray-200 rounded-md">
+              <h3 className="text-md font-semibold mb-2 text-gray-700">Token Counting Options</h3>
+              
+              <div className="flex items-center mb-3">
+                <input
+                  type="checkbox"
+                  id="countTokens"
+                  checked={countTokens}
+                  onChange={(e) => setCountTokens(e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="countTokens" className="ml-2 block text-sm text-gray-700">
+                  Count tokens in output
+                </label>
+              </div>
+              
+              <div className={`mb-3 ${countTokens ? '' : 'opacity-50'}`}>
+                <label htmlFor="tokenEncoding" className="block text-sm font-medium text-gray-700 mb-1">
+                  Tokenizer Encoding
+                </label>
+                <select
+                  id="tokenEncoding"
+                  value={tokenEncoding}
+                  onChange={(e) => setTokenEncoding(e.target.value)}
+                  disabled={!countTokens}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {TOKENIZER_ENCODINGS.map((encoding) => (
+                    <option key={encoding.value} value={encoding.value}>
+                      {encoding.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className={`flex items-center ${countTokens ? '' : 'opacity-50'}`}>
+                <input
+                  type="checkbox"
+                  id="tokensOnly"
+                  checked={tokensOnly}
+                  onChange={(e) => setTokensOnly(e.target.checked)}
+                  disabled={!countTokens}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="tokensOnly" className="ml-2 block text-sm text-gray-700">
+                  Only show token count (faster, no content output)
+                </label>
+              </div>
+            </div>
           </div>
-        </form>
-
-        <div className="mt-6">
-          <h3 className="text-sm font-medium text-foreground mb-2">Examples:</h3>
-          <ul className="space-y-1 text-sm text-muted-foreground">
-            <li>• https://github.com/facebook/react</li>
-            <li>• https://github.com/tensorflow/tensorflow</li>
-            <li>• https://github.com/microsoft/vscode</li>
-          </ul>
+        )}
+        
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={isProcessing}
+            className={`px-4 py-2 rounded-md text-white ${
+              isProcessing
+                ? 'bg-blue-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+          >
+            {isProcessing ? 'Processing...' : 'Process Repository'}
+          </button>
         </div>
-      </div>
+      </form>
     </div>
   )
 }

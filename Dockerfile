@@ -21,8 +21,14 @@ RUN apt-get update && apt-get install -y \
     libmysqlclient-dev \
     libsqlite3-dev \
     libhiredis-dev \
+    wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Rust and Cargo (required for tiktoken-rs)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup default stable
 
 # Build and install Drogon
 RUN git clone --recursive --depth=1 --branch v1.9.10 https://github.com/drogonframework/drogon.git /tmp/drogon && \
@@ -46,7 +52,8 @@ COPY . .
 RUN rm -rf build && \
     mkdir -p build && \
     cd build && \
-    cmake .. && \
+    cmake .. -DUSE_TIKTOKEN=ON && \
+    cmake --build . --target repomix -j $(nproc) && \
     cmake --build . --target repomix_server -j $(nproc)
 
 # Create logs directory with proper permissions
