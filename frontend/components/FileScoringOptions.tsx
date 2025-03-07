@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 interface FileScoringOptionsProps {
-  options: FileScoringConfig;
-  onChange: (options: FileScoringConfig) => void;
-  enabled: boolean;
+  config: FileScoringConfig;
+  onChange: (config: FileScoringConfig) => void;
 }
 
 export interface FileScoringConfig {
@@ -68,253 +67,135 @@ export const defaultFileScoringConfig: FileScoringConfig = {
   useTreeSitter: true,
 };
 
-const FileScoringOptions: React.FC<FileScoringOptionsProps> = ({ options, onChange, enabled }) => {
+const FileScoringOptions: React.FC<FileScoringOptionsProps> = ({ config, onChange }) => {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const handleChange = (field: keyof FileScoringConfig, value: any) => {
-    onChange({
-      ...options,
-      [field]: value,
-    });
+    onChange({ ...config, [field]: value });
   };
 
-  // Format the slider value to show as percentage
-  const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
-  
-  // Format the threshold slider value
-  const formatThreshold = (value: number) => value.toFixed(2);
-
-  if (!enabled) {
-    return null;
-  }
+  const SliderInput = ({ field, label, min = 0, max = 1, step = 0.1 }: 
+    { field: keyof FileScoringConfig, label: string, min?: number, max?: number, step?: number }) => (
+    <div className="mb-2">
+      <div className="flex justify-between items-center">
+        <label className="text-sm text-gray-700">
+          {label} ({config[field]})
+        </label>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={config[field] as number}
+        onChange={(e) => handleChange(field, parseFloat(e.target.value))}
+        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+      />
+    </div>
+  );
 
   return (
-    <div className="space-y-4 p-4 bg-gray-50 rounded-md border border-gray-200">
-      <h3 className="text-lg font-medium text-gray-900">File Scoring Configuration</h3>
-      
-      <div className="space-y-4">
-        <div className="border-b pb-4">
-          <h4 className="text-md font-medium text-gray-800 mb-2">Project Structure Weights</h4>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm text-gray-700">Root Files Weight: {formatPercent(options.rootFilesWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.rootFilesWeight}
-                onChange={(e) => handleChange('rootFilesWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-              <p className="text-xs text-gray-500">Importance of root-level files (README, package.json, etc.)</p>
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Top-Level Directories Weight: {formatPercent(options.topLevelDirsWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.topLevelDirsWeight}
-                onChange={(e) => handleChange('topLevelDirsWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-              <p className="text-xs text-gray-500">Importance of files in key directories (src, lib, etc.)</p>
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Entry Points Weight: {formatPercent(options.entryPointsWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.entryPointsWeight}
-                onChange={(e) => handleChange('entryPointsWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-              <p className="text-xs text-gray-500">Importance of entry point files (index.js, main.py, etc.)</p>
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Dependency Graph Weight: {formatPercent(options.dependencyGraphWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.dependencyGraphWeight}
-                onChange={(e) => handleChange('dependencyGraphWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-              <p className="text-xs text-gray-500">Importance of files that are widely imported/referenced</p>
-            </div>
-          </div>
+    <div>
+      <h3 className="text-lg font-semibold mb-2">File Scoring Options</h3>
+      <p className="text-sm text-gray-500 mb-4">
+        Configure how files are scored and selected for inclusion
+      </p>
+
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Inclusion Threshold
+        </label>
+        <div className="flex items-center">
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={config.inclusionThreshold}
+            onChange={(e) => handleChange('inclusionThreshold', parseFloat(e.target.value))}
+            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer mr-2"
+          />
+          <span className="text-sm text-gray-700">{config.inclusionThreshold.toFixed(2)}</span>
         </div>
-        
-        <div className="border-b pb-4">
-          <h4 className="text-md font-medium text-gray-800 mb-2">File Type Weights</h4>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm text-gray-700">Source Code Weight: {formatPercent(options.sourceCodeWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.sourceCodeWeight}
-                onChange={(e) => handleChange('sourceCodeWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Config Files Weight: {formatPercent(options.configFilesWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.configFilesWeight}
-                onChange={(e) => handleChange('configFilesWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Documentation Weight: {formatPercent(options.documentationWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.documentationWeight}
-                onChange={(e) => handleChange('documentationWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Test Files Weight: {formatPercent(options.testFilesWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.testFilesWeight}
-                onChange={(e) => handleChange('testFilesWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-            </div>
-          </div>
-        </div>
-        
-        <div className="border-b pb-4">
-          <h4 className="text-md font-medium text-gray-800 mb-2">Other Factors</h4>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm text-gray-700">Recently Modified Weight: {formatPercent(options.recentlyModifiedWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.recentlyModifiedWeight}
-                onChange={(e) => handleChange('recentlyModifiedWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-              <p className="text-xs text-gray-500">Importance of recently modified files</p>
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Recent Time Window (days)</label>
-              <input
-                type="number"
-                min="1"
-                max="90"
-                value={options.recentTimeWindowDays}
-                onChange={(e) => handleChange('recentTimeWindowDays', parseInt(e.target.value))}
-                className="w-full p-2 border rounded"
-              />
-              <p className="text-xs text-gray-500">What constitutes "recent" in days</p>
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">File Size Weight: {formatPercent(options.fileSizeWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.fileSizeWeight}
-                onChange={(e) => handleChange('fileSizeWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-              <p className="text-xs text-gray-500">Smaller files get higher scores (inverse relationship)</p>
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Large File Threshold (bytes)</label>
-              <input
-                type="number"
-                min="1000"
-                max="10000000"
-                step="1000"
-                value={options.largeFileThreshold}
-                onChange={(e) => handleChange('largeFileThreshold', parseInt(e.target.value))}
-                className="w-full p-2 border rounded"
-              />
-              <p className="text-xs text-gray-500">Size threshold for what's considered a large file</p>
-            </div>
-            
-            <div>
-              <label className="block text-sm text-gray-700">Code Density Weight: {formatPercent(options.codeDensityWeight)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.codeDensityWeight}
-                onChange={(e) => handleChange('codeDensityWeight', parseFloat(e.target.value))}
-                className="w-full"
-              />
-              <p className="text-xs text-gray-500">Importance of code-to-comment ratio and structure</p>
-            </div>
-          </div>
-        </div>
-        
-        <div>
-          <h4 className="text-md font-medium text-gray-800 mb-2">Inclusion Settings</h4>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm text-gray-700">Inclusion Threshold: {formatThreshold(options.inclusionThreshold)}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={options.inclusionThreshold}
-                onChange={(e) => handleChange('inclusionThreshold', parseFloat(e.target.value))}
-                className="w-full"
-              />
-              <p className="text-xs text-gray-500">Minimum score needed for file inclusion (0-1)</p>
-            </div>
-            
-            <div className="flex items-center">
-              <input
-                type="checkbox"
-                id="useTreeSitter"
-                checked={options.useTreeSitter}
-                onChange={(e) => handleChange('useTreeSitter', e.target.checked)}
-                className="h-4 w-4 text-blue-600 border-gray-300 rounded"
-              />
-              <label htmlFor="useTreeSitter" className="ml-2 block text-sm text-gray-700">
-                Use TreeSitter for improved code analysis
-              </label>
-            </div>
-          </div>
-        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          Files with scores below this threshold will be excluded
+        </p>
       </div>
+
+      <div className="flex items-center mb-4">
+        <input
+          type="checkbox"
+          id="useTreeSitter"
+          checked={config.useTreeSitter}
+          onChange={(e) => handleChange('useTreeSitter', e.target.checked)}
+          className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+        />
+        <label htmlFor="useTreeSitter" className="ml-2 text-sm text-gray-700">
+          Use Tree-sitter for improved code analysis
+        </label>
+      </div>
+
+      <div className="mb-2">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="text-sm font-medium text-blue-600 hover:text-blue-800 focus:outline-none"
+        >
+          {showAdvanced ? '- Hide Advanced Scoring Options' : '+ Show Advanced Scoring Options'}
+        </button>
+      </div>
+
+      {showAdvanced && (
+        <div className="p-3 border border-gray-200 rounded-md">
+          <h4 className="font-medium text-sm text-gray-800 mb-2">Project Structure Weights</h4>
+          <SliderInput field="rootFilesWeight" label="Root Files" />
+          <SliderInput field="topLevelDirsWeight" label="Top-level Directories" />
+          <SliderInput field="entryPointsWeight" label="Entry Points" />
+          <SliderInput field="dependencyGraphWeight" label="Dependency Graph" />
+
+          <h4 className="font-medium text-sm text-gray-800 mt-4 mb-2">File Type Weights</h4>
+          <SliderInput field="sourceCodeWeight" label="Source Code" />
+          <SliderInput field="configFilesWeight" label="Configuration Files" />
+          <SliderInput field="documentationWeight" label="Documentation" />
+          <SliderInput field="testFilesWeight" label="Test Files" />
+
+          <h4 className="font-medium text-sm text-gray-800 mt-4 mb-2">Recency Weights</h4>
+          <SliderInput field="recentlyModifiedWeight" label="Recently Modified Files" />
+          <div className="mb-2">
+            <label className="text-sm text-gray-700">
+              Recent Time Window (days)
+            </label>
+            <input
+              type="number"
+              value={config.recentTimeWindowDays}
+              onChange={(e) => handleChange('recentTimeWindowDays', parseInt(e.target.value))}
+              className="w-full px-3 py-1 text-sm border border-gray-300 rounded"
+              min="1"
+              max="365"
+            />
+          </div>
+
+          <h4 className="font-medium text-sm text-gray-800 mt-4 mb-2">File Size Weights</h4>
+          <SliderInput field="fileSizeWeight" label="File Size (inverse)" />
+          <div className="mb-2">
+            <label className="text-sm text-gray-700">
+              Large File Threshold (bytes)
+            </label>
+            <input
+              type="number"
+              value={config.largeFileThreshold}
+              onChange={(e) => handleChange('largeFileThreshold', parseInt(e.target.value))}
+              className="w-full px-3 py-1 text-sm border border-gray-300 rounded"
+              min="1000"
+              max="10000000"
+              step="1000"
+            />
+          </div>
+
+          <h4 className="font-medium text-sm text-gray-800 mt-4 mb-2">Code Density</h4>
+          <SliderInput field="codeDensityWeight" label="Code Density" />
+        </div>
+      )}
     </div>
   );
 };

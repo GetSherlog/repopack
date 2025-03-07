@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import SummarizationOptions, { SummarizationOptions as SummarizationOptionsType, defaultSummarizationOptions } from './SummarizationOptions'
+import FileScoringOptions, { FileScoringConfig, defaultFileScoringConfig } from './FileScoringOptions'
 import { TOKENIZER_ENCODINGS } from '../lib/repomix-api'
 
 interface GitHubFormProps {
@@ -12,7 +13,12 @@ interface GitHubFormProps {
     format: string,
     countTokens: boolean,
     tokenEncoding: string,
-    tokensOnly: boolean
+    tokensOnly: boolean,
+    summarizationOptions: SummarizationOptionsType,
+    showVerbose: boolean,
+    showTiming: boolean,
+    fileSelectionStrategy: string,
+    fileScoringConfig: FileScoringConfig
   ) => void;
   isProcessing: boolean;
 }
@@ -31,6 +37,8 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
   const [countTokens, setCountTokens] = useState(false)
   const [tokenEncoding, setTokenEncoding] = useState('cl100k_base')
   const [tokensOnly, setTokensOnly] = useState(false)
+  const [fileSelectionStrategy, setFileSelectionStrategy] = useState('all')
+  const [fileScoringConfig, setFileScoringConfig] = useState<FileScoringConfig>(defaultFileScoringConfig)
 
   // Load token from localStorage if available
   useEffect(() => {
@@ -78,7 +86,12 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
         format,
         countTokens,
         tokenEncoding,
-        tokensOnly
+        tokensOnly,
+        summarizationOptions,
+        showVerbose,
+        showTiming,
+        fileSelectionStrategy,
+        fileScoringConfig
       )
     } catch (err: any) {
       setError(`Error: ${err?.message || 'An unknown error occurred'}`);
@@ -203,6 +216,55 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
                 <option value="claude_xml">Claude XML</option>
               </select>
             </div>
+
+            {/* Processing Options */}
+            <div className="mb-4 p-4 border border-gray-200 rounded-md">
+              <h3 className="text-md font-semibold mb-2 text-gray-700">Processing Options</h3>
+              
+              <div className="flex items-center mb-3">
+                <input
+                  type="checkbox"
+                  id="showVerbose"
+                  checked={showVerbose}
+                  onChange={(e) => setShowVerbose(e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="showVerbose" className="ml-2 block text-sm text-gray-700">
+                  Verbose output
+                </label>
+              </div>
+              
+              <div className="flex items-center mb-3">
+                <input
+                  type="checkbox"
+                  id="showTiming"
+                  checked={showTiming}
+                  onChange={(e) => setShowTiming(e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="showTiming" className="ml-2 block text-sm text-gray-700">
+                  Show timing information
+                </label>
+              </div>
+              
+              <div className="mb-3">
+                <label htmlFor="fileSelectionStrategy" className="block text-sm font-medium text-gray-700 mb-1">
+                  File Selection Strategy
+                </label>
+                <select
+                  id="fileSelectionStrategy"
+                  value={fileSelectionStrategy}
+                  onChange={(e) => setFileSelectionStrategy(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">All Files</option>
+                  <option value="scoring">Smart File Selection (Scoring)</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  Smart selection uses scoring to prioritize the most important files.
+                </p>
+              </div>
+            </div>
             
             {/* Token Counting Options */}
             <div className="mb-4 p-4 border border-gray-200 rounded-md">
@@ -249,19 +311,37 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
                   disabled={!countTokens}
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500"
                 />
-                <label htmlFor="tokensOnly" className="ml-2 block text-sm text-gray-700">
+                <label htmlFor="tokensOnly" className="ml-2 text-sm text-gray-700">
                   Only show token count (faster, no content output)
                 </label>
               </div>
             </div>
+            
+            {/* Smart Summarization Options */}
+            <div className="mb-4 p-4 border border-gray-200 rounded-md">
+              <SummarizationOptions 
+                options={summarizationOptions} 
+                onChange={setSummarizationOptions} 
+              />
+            </div>
+            
+            {/* File Scoring Options - only show when scoring strategy is selected */}
+            {fileSelectionStrategy === 'scoring' && (
+              <div className="mb-4 p-4 border border-gray-200 rounded-md">
+                <FileScoringOptions 
+                  config={fileScoringConfig} 
+                  onChange={setFileScoringConfig} 
+                />
+              </div>
+            )}
           </div>
         )}
         
-        <div className="flex justify-end">
+        <div className="mt-6">
           <button
             type="submit"
             disabled={isProcessing}
-            className={`px-4 py-2 rounded-md text-white ${
+            className={`w-full py-2 px-4 rounded-md text-white font-medium ${
               isProcessing
                 ? 'bg-blue-400 cursor-not-allowed'
                 : 'bg-blue-600 hover:bg-blue-700'

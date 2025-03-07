@@ -36,6 +36,11 @@ interface GitHubRequestBody {
   count_tokens?: boolean;
   token_encoding?: string;
   tokens_only?: boolean;
+  summarization_options?: any;
+  verbose?: boolean;
+  show_timing?: boolean;
+  file_selection_strategy?: string;
+  scoring_config?: any;
 }
 
 // JSZip type definitions
@@ -184,6 +189,11 @@ export async function processFiles(
  * @param countTokens Optional flag to count tokens in the output
  * @param tokenEncoding Optional tokenizer encoding to use (default: cl100k_base)
  * @param tokensOnly Optional flag to only return token count without content
+ * @param summarizationOptions Optional smart summarization options
+ * @param showVerbose Optional flag to show verbose output
+ * @param showTiming Optional flag to show timing information
+ * @param fileSelectionStrategy Optional file selection strategy ('all', 'scoring')
+ * @param fileScoringConfig Optional scoring configuration for 'scoring' strategy
  * @returns Promise with processing results
  */
 export async function processGitRepo(
@@ -193,7 +203,12 @@ export async function processGitRepo(
   excludePatterns: string = '',
   countTokens: boolean = false,
   tokenEncoding: string = 'cl100k_base',
-  tokensOnly: boolean = false
+  tokensOnly: boolean = false,
+  summarizationOptions: any = null,
+  showVerbose: boolean = false,
+  showTiming: boolean = false,
+  fileSelectionStrategy: string = 'all',
+  fileScoringConfig: any = null
 ): Promise<RepomixApiResponse> {
   try {
     const token = localStorage.getItem('githubToken') || '';
@@ -222,6 +237,30 @@ export async function processGitRepo(
       
       if (tokensOnly) {
         requestBody.tokens_only = true;
+      }
+    }
+    
+    // Add summarization options if provided
+    if (summarizationOptions) {
+      requestBody.summarization_options = summarizationOptions;
+    }
+    
+    // Add verbose and timing flags
+    if (showVerbose) {
+      requestBody.verbose = true;
+    }
+    
+    if (showTiming) {
+      requestBody.show_timing = true;
+    }
+    
+    // Add file selection strategy
+    if (fileSelectionStrategy !== 'all') {
+      requestBody.file_selection_strategy = fileSelectionStrategy;
+      
+      // Add scoring configuration if using scoring strategy
+      if (fileSelectionStrategy === 'scoring' && fileScoringConfig) {
+        requestBody.scoring_config = fileScoringConfig;
       }
     }
     

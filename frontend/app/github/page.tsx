@@ -24,7 +24,12 @@ export default function GitHubPage() {
     format: string,
     countTokens: boolean,
     tokenEncoding: string,
-    tokensOnly: boolean
+    tokensOnly: boolean,
+    summarizationOptions: any,
+    showVerbose: boolean,
+    showTiming: boolean,
+    fileSelectionStrategy: string,
+    fileScoringConfig: any
   ) => {
     setRepoUrl(url)
     setIsProcessing(true)
@@ -58,7 +63,12 @@ export default function GitHubPage() {
         excludePatterns,
         countTokens,
         tokenEncoding,
-        tokensOnly
+        tokensOnly,
+        summarizationOptions,
+        showVerbose,
+        showTiming,
+        fileSelectionStrategy,
+        fileScoringConfig
       );
       console.log('Received API response:', output);
       
