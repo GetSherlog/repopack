@@ -14,7 +14,7 @@ export default function UploadPage() {
   const [result, setResult] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const handleFilesUploaded = async (files: File[]) => {
+  const handleFilesUploaded = async (files: File[], includePatterns: string, excludePatterns: string) => {
     setIsProcessing(true)
     setProgress(0)
     setResult(null)
@@ -35,8 +35,8 @@ export default function UploadPage() {
       // Import dynamically to prevent server-side rendering issues
       const { processFiles } = await import('@/lib/repomix-api')
       
-      // Process the files
-      const output = await processFiles(files)
+      // Process the files with include/exclude patterns
+      const output = await processFiles(files, 'plain', includePatterns, excludePatterns)
       
       clearInterval(interval)
       setProgress(100)

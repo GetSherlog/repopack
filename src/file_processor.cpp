@@ -288,8 +288,8 @@ size_t FileProcessor::countLines(const std::string& content) const {
 }
 
 bool FileProcessor::shouldProcessFile(const fs::path& filePath) const {
-    // Check if file is ignored by pattern matcher
-    if (patternMatcher_.isIgnored(filePath)) {
+    // Skip if not a regular file
+    if (!fs::is_regular_file(filePath)) {
         return false;
     }
     
@@ -322,10 +322,11 @@ bool FileProcessor::shouldProcessFile(const fs::path& filePath) const {
                 return false;
             }
         }
-        
-        return true;
     }
     catch (...) {
         return false;
     }
+    
+    // Use the pattern matcher to determine if file should be processed
+    return patternMatcher_.shouldProcess(filePath);
 }

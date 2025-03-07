@@ -3,13 +3,16 @@
 import { useState, useEffect } from 'react'
 
 interface GitHubFormProps {
-  onRepoSubmit: (url: string) => void;
+  onRepoSubmit: (url: string, includePatterns: string, excludePatterns: string) => void;
   isProcessing: boolean;
 }
 
 export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormProps) {
   const [repoUrl, setRepoUrl] = useState('')
   const [githubToken, setGithubToken] = useState('')
+  const [includePatterns, setIncludePatterns] = useState('')
+  const [excludePatterns, setExcludePatterns] = useState('')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Load token from localStorage if available
@@ -48,7 +51,11 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
     }
 
     setError(null)
-    onRepoSubmit(repoUrl)
+    onRepoSubmit(repoUrl, includePatterns, excludePatterns)
+  }
+
+  const toggleAdvanced = () => {
+    setShowAdvanced(prev => !prev)
   }
 
   return (
@@ -95,6 +102,68 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
               Provide a GitHub Personal Access Token to avoid rate limiting. Your token will be stored locally and never sent to our servers.
             </p>
           </div>
+          
+          <button
+            type="button"
+            onClick={toggleAdvanced}
+            className="text-sm text-primary hover:text-primary/90 flex items-center mb-4"
+          >
+            {showAdvanced ? (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+                Hide advanced options
+              </>
+            ) : (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                </svg>
+                Show advanced options
+              </>
+            )}
+          </button>
+          
+          {showAdvanced && (
+            <div className="mb-6 space-y-4 border border-gray-200 rounded-lg p-4 bg-gray-50">
+              <div>
+                <label htmlFor="include-patterns" className="block text-sm font-medium text-gray-700 mb-1">
+                  Include patterns (comma-separated)
+                </label>
+                <input
+                  id="include-patterns"
+                  type="text"
+                  value={includePatterns}
+                  onChange={(e) => setIncludePatterns(e.target.value)}
+                  placeholder="*.rs,*.toml"
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                  disabled={isProcessing}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Only files matching these patterns will be processed
+                </p>
+              </div>
+              
+              <div>
+                <label htmlFor="exclude-patterns" className="block text-sm font-medium text-gray-700 mb-1">
+                  Exclude patterns (comma-separated)
+                </label>
+                <input
+                  id="exclude-patterns"
+                  type="text"
+                  value={excludePatterns}
+                  onChange={(e) => setExcludePatterns(e.target.value)}
+                  placeholder="*.txt,*.md"
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                  disabled={isProcessing}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Files matching these patterns will be excluded
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="mt-6 flex justify-end">
             <button

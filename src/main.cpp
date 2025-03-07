@@ -8,6 +8,8 @@ int main(int argc, char** argv) {
         
         RepomixOptions options;
         std::string formatStr = "plain";
+        std::string includePatterns;
+        std::string excludePatterns;
         
         // Required input directory
         app.add_option("-i,--input", options.inputDir, "Input directory (required)")
@@ -20,6 +22,14 @@ int main(int argc, char** argv) {
         // Optional output format
         app.add_option("-f,--format", formatStr, "Output format: plain, markdown, xml (default: plain)")
             ->check(CLI::IsMember({"plain", "markdown", "xml"}));
+        
+        // Optional include patterns
+        app.add_option("--include", includePatterns, 
+                     "Comma-separated list of glob patterns for files to include (e.g. *.rs,*.toml)");
+        
+        // Optional exclude patterns
+        app.add_option("--exclude", excludePatterns, 
+                     "Comma-separated list of glob patterns for files to exclude (e.g. *.txt,*.md)");
         
         // Optional verbose flag
         app.add_flag("-v,--verbose", options.verbose, "Enable verbose output");
@@ -42,6 +52,10 @@ int main(int argc, char** argv) {
         } else {
             options.format = OutputFormat::Plain;
         }
+        
+        // Store include/exclude patterns
+        options.includePatterns = includePatterns;
+        options.excludePatterns = excludePatterns;
         
         // Run repomix
         Repomix repomix(options);

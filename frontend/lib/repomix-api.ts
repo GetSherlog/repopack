@@ -60,6 +60,7 @@ const API_CONFIG = {
     capabilities: '/capabilities',
     processUploadedDir: '/process_uploaded_dir',
     processShared: '/process_shared',
+    processGitRepo: '/process_git_repo',
   }
 };
 
@@ -87,9 +88,16 @@ export async function isApiAvailable(): Promise<boolean> {
  * Process files using the Repomix API
  * @param files Array of files to process
  * @param format Output format (plain, markdown, xml)
+ * @param includePatterns Optional comma-separated glob patterns to include (e.g. "*.rs,*.toml")
+ * @param excludePatterns Optional comma-separated glob patterns to exclude (e.g. "*.txt,*.md")
  * @returns Promise with processing results
  */
-export async function processFiles(files: File[], format: string = 'plain'): Promise<RepomixApiResponse> {
+export async function processFiles(
+  files: File[], 
+  format: string = 'plain',
+  includePatterns: string = '',
+  excludePatterns: string = ''
+): Promise<RepomixApiResponse> {
   try {
     // Validate input
     if (!files || files.length === 0) {
@@ -104,6 +112,16 @@ export async function processFiles(files: File[], format: string = 'plain'): Pro
     
     // Add format parameter
     formData.append('format', format);
+    
+    // Add include patterns if provided
+    if (includePatterns) {
+      formData.append('include', includePatterns);
+    }
+    
+    // Add exclude patterns if provided
+    if (excludePatterns) {
+      formData.append('exclude', excludePatterns);
+    }
     
     // Send request to API
     const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processFiles}`, {
@@ -129,9 +147,16 @@ export async function processFiles(files: File[], format: string = 'plain'): Pro
  * Process a GitHub repository using the Repomix API
  * @param repoUrl URL of the GitHub repository to process
  * @param format Output format (plain, markdown, xml)
+ * @param includePatterns Optional comma-separated glob patterns to include (e.g. "*.rs,*.toml") 
+ * @param excludePatterns Optional comma-separated glob patterns to exclude (e.g. "*.txt,*.md")
  * @returns Promise with processing results
  */
-export async function processGitRepo(repoUrl: string, format: string = 'plain'): Promise<RepomixApiResponse> {
+export async function processGitRepo(
+  repoUrl: string, 
+  format: string = 'plain',
+  includePatterns: string = '',
+  excludePatterns: string = ''
+): Promise<RepomixApiResponse> {
   try {
     // Validate input
     if (!repoUrl) {
@@ -143,80 +168,83 @@ export async function processGitRepo(repoUrl: string, format: string = 'plain'):
     // Get GitHub token from localStorage if available
     const token = localStorage.getItem('githubToken') || '';
     
-    // Create simple request with just the URL and format
-    // The backend will handle fetching the repository
-    const requestBody = {
+    // Create request body with URL, format, and patterns
+    const requestBody: {
+      repoUrl: string;
+      format: string;
+      token: string;
+      include?: string;
+      exclude?: string;
+    } = {
       repoUrl,
       format,
       token
     };
     
-    console.log('Sending GitHub repository request to backend...');
-    
-    // Use a higher timeout for large responses
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
-    
-    try {
-      const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processShared}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`API request failed with status: ${response.status}`);
-      }
-      
-      // Check content size before parsing
-      const contentLength = response.headers.get('Content-Length');
-      if (contentLength && parseInt(contentLength) > 10 * 1024 * 1024) { // > 10MB
-        console.warn('Very large response detected, this may cause parsing issues');
-      }
-      
-      // Read the response as text first (safer for large responses)
-      const responseText = await response.text();
-      
-      // Record response size for debugging
-      console.log(`Response size: ${responseText.length} bytes`);
-      
-      // Try to parse the JSON
-      let result;
-      try {
-        result = JSON.parse(responseText);
-      } catch (err: any) {
-        console.error('Failed to parse response JSON:', err);
-        return {
-          success: false,
-          error: `Failed to parse response: ${err.message || 'Unknown parsing error'}. Response size: ${responseText.length} bytes`,
-        };
-      }
-      
-      // Ensure we have valid content or error message
-      if (result.success && (!result.content || result.content === null)) {
-        console.warn('Backend returned success but no content');
-        result.content = "Repository processed successfully, but no content was returned.";
-      }
-      
-      if (!result.success && (!result.error || result.error === null)) {
-        console.warn('Backend returned failure but no error message');
-        result.error = "Unknown error occurred while processing repository.";
-      }
-      
-      console.log('Received response:', result);
-      if (result.contentTruncated) {
-        console.warn('Content was truncated due to size limits');
-      }
-      
-      return result as RepomixApiResponse;
-    } finally {
-      clearTimeout(timeoutId);
+    // Add include patterns if provided
+    if (includePatterns) {
+      requestBody.include = includePatterns;
     }
+    
+    // Add exclude patterns if provided
+    if (excludePatterns) {
+      requestBody.exclude = excludePatterns;
+    }
+
+    // Send request to API
+    const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processGitRepo}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`API request failed with status: ${response.status}`);
+    }
+    
+    // Check content size before parsing
+    const contentLength = response.headers.get('Content-Length');
+    if (contentLength && parseInt(contentLength) > 10 * 1024 * 1024) { // > 10MB
+      console.warn('Very large response detected, this may cause parsing issues');
+    }
+    
+    // Read the response as text first (safer for large responses)
+    const responseText = await response.text();
+    
+    // Record response size for debugging
+    console.log(`Response size: ${responseText.length} bytes`);
+    
+    // Try to parse the JSON
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch (err: any) {
+      console.error('Failed to parse response JSON:', err);
+      return {
+        success: false,
+        error: `Failed to parse response: ${err.message || 'Unknown parsing error'}. Response size: ${responseText.length} bytes`,
+      };
+    }
+    
+    // Ensure we have valid content or error message
+    if (result.success && (!result.content || result.content === null)) {
+      console.warn('Backend returned success but no content');
+      result.content = "Repository processed successfully, but no content was returned.";
+    }
+    
+    if (!result.success && (!result.error || result.error === null)) {
+      console.warn('Backend returned failure but no error message');
+      result.error = "Unknown error occurred while processing repository.";
+    }
+    
+    console.log('Received response:', result);
+    if (result.contentTruncated) {
+      console.warn('Content was truncated due to size limits');
+    }
+    
+    return result as RepomixApiResponse;
   } catch (error: any) {
     if (error.name === 'AbortError') {
       console.error('Request timed out after 2 minutes');

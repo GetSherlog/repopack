@@ -23,6 +23,8 @@ struct RepomixOptions {
     bool verbose = false;
     bool showTiming = false;
     unsigned int numThreads = std::thread::hardware_concurrency();
+    std::string includePatterns; // Comma-separated list of glob patterns to include
+    std::string excludePatterns; // Comma-separated list of glob patterns to exclude
 };
 
 class Repomix {

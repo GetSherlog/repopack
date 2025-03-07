@@ -89,6 +89,25 @@ Repomix::Repomix(const RepomixOptions& options)
     patternMatcher_->addIgnorePattern("CMakeCache.txt");
     patternMatcher_->addIgnorePattern("cmake_install.cmake");
     
+    // Apply include patterns if specified
+    if (!options_.includePatterns.empty()) {
+        patternMatcher_->setIncludePatterns(options_.includePatterns);
+        
+        if (options_.verbose) {
+            std::cout << "Using include patterns: " << options_.includePatterns << std::endl;
+        }
+    }
+    
+    // Apply exclude patterns if specified
+    if (!options_.excludePatterns.empty()) {
+        patternMatcher_->setExcludePatterns(options_.excludePatterns);
+        
+        if (options_.verbose) {
+            std::cout << "Using exclude patterns: " << options_.excludePatterns << std::endl;
+        }
+    }
+    
+    // Create file processor with pattern matcher
     fileProcessor_ = std::make_unique<FileProcessor>(*patternMatcher_, options_.numThreads);
 }
 

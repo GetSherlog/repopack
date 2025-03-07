@@ -15,7 +15,7 @@ export default function GitHubPage() {
   const [error, setError] = useState<string | null>(null)
   const [repoUrl, setRepoUrl] = useState<string>('')
 
-  const handleRepoSubmit = async (url: string) => {
+  const handleRepoSubmit = async (url: string, includePatterns: string, excludePatterns: string) => {
     setRepoUrl(url)
     setIsProcessing(true)
     setProgress(0)
@@ -37,9 +37,9 @@ export default function GitHubPage() {
       // Import dynamically to prevent server-side rendering issues
       const { processGitRepo } = await import('@/lib/repomix-api')
       
-      // Process the GitHub repository
+      // Process the GitHub repository with include/exclude patterns
       console.log('Calling processGitRepo with URL:', url);
-      const output = await processGitRepo(url);
+      const output = await processGitRepo(url, 'plain', includePatterns, excludePatterns);
       console.log('Received API response:', output);
       
       clearInterval(interval)
