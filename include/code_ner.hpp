@@ -10,6 +10,7 @@
 #include <optional>
 #include <unordered_set>
 #include <unordered_map>
+#include <regex>
 #include "repomix.hpp"  // For SummarizationOptions
 
 // Forward declaration for ONNX Runtime headers
@@ -24,6 +25,14 @@ namespace fs = std::filesystem;
 
 // Forward declaration
 class FileProcessor;
+
+// Forward declarations for tree-sitter
+struct TSLanguage;
+struct TSParser;
+struct TSTree;
+struct TSNode;
+struct TSQuery;
+struct TSQueryCursor;
 
 // Base class for Named Entity Recognition in code
 class CodeNER {

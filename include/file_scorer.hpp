@@ -4,7 +4,9 @@
 #include <vector>
 #include <filesystem>
 #include <unordered_map>
-#include <memory>
+#include <unordered_set>
+#include <mutex>
+#include <nlohmann/json.hpp>
 #include <functional>
 #include "pattern_matcher.hpp"
 
@@ -140,4 +142,8 @@ private:
     
     // TreeSitter integration helper
     float analyzeWithTreeSitter(const fs::path& filePath);
+    
+    // Fallback methods for file analysis without tree-sitter
+    float analyzeFileContent(const fs::path& filePath, const std::string& content);
+    float analyzeFileContent(const fs::path& filePath);
 }; 

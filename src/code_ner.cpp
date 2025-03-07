@@ -12,6 +12,17 @@
 #include <onnxruntime_cxx_api.h>
 #endif
 
+// Include TreeSitter header
+#include <tree_sitter/api.h>
+
+// Include language headers
+extern "C" {
+    TSLanguage* tree_sitter_cpp();
+    TSLanguage* tree_sitter_c();
+    TSLanguage* tree_sitter_python();
+    TSLanguage* tree_sitter_javascript();
+}
+
 // Static cache initialization for MLNER
 std::unordered_map<std::string, std::vector<CodeNER::NamedEntity>> MLNER::entityCache_;
 std::mutex MLNER::cacheMutex_;
@@ -305,15 +316,79 @@ std::vector<CodeNER::NamedEntity> RegexNER::extractImports(const std::string& co
     return entities;
 }
 
-// TreeSitterNER implementation (placeholder)
+// TreeSitterNER implementation
 struct TreeSitterNER::TreeSitterImpl {
-    // Placeholder for Tree-sitter implementation
-    void* parser = nullptr;
+    TSParser* parser = nullptr;
+    std::unordered_map<std::string, TSLanguage*> languages;
+    std::unordered_map<std::string, TSQuery*> queries;
+    
+    TreeSitterImpl() {
+        // Initialize parser
+        parser = ts_parser_new();
+        
+        // Initialize supported languages
+        languages["cpp"] = tree_sitter_cpp();
+        languages["c"] = tree_sitter_c();
+        languages["python"] = tree_sitter_python();
+        languages["javascript"] = tree_sitter_javascript();
+        languages["typescript"] = tree_sitter_javascript(); // TypeScript uses JavaScript grammar for basic parsing
+        
+        // Create queries for entity extraction
+        // Function declarations
+        const char* cpp_function_query = "(function_definition declarator: (function_declarator declarator: (identifier) @function.name)) @function.def";
+        const char* python_function_query = "(function_definition name: (identifier) @function.name) @function.def";
+        const char* js_function_query = "(function_declaration name: (identifier) @function.name) @function.def";
+        
+        // Class declarations
+        const char* cpp_class_query = "(class_specifier name: (type_identifier) @class.name) @class.def";
+        const char* python_class_query = "(class_definition name: (identifier) @class.name) @class.def";
+        const char* js_class_query = "(class_declaration name: (identifier) @class.name) @class.def";
+        
+        // Import statements
+        const char* cpp_include_query = "(preproc_include path: (string_literal) @import.path) @import.statement";
+        const char* python_import_query = "(import_statement module_name: (dotted_name (identifier) @import.name)) @import.statement";
+        const char* js_import_query = "(import_statement source: (string) @import.path) @import.statement";
+        
+        // Initialize queries
+        uint32_t error_offset;
+        TSQueryError error_type;
+        
+        // C++ queries
+        queries["cpp_function"] = ts_query_new(languages["cpp"], cpp_function_query, strlen(cpp_function_query), &error_offset, &error_type);
+        queries["cpp_class"] = ts_query_new(languages["cpp"], cpp_class_query, strlen(cpp_class_query), &error_offset, &error_type);
+        queries["cpp_import"] = ts_query_new(languages["cpp"], cpp_include_query, strlen(cpp_include_query), &error_offset, &error_type);
+        
+        // Python queries
+        queries["python_function"] = ts_query_new(languages["python"], python_function_query, strlen(python_function_query), &error_offset, &error_type);
+        queries["python_class"] = ts_query_new(languages["python"], python_class_query, strlen(python_class_query), &error_offset, &error_type);
+        queries["python_import"] = ts_query_new(languages["python"], python_import_query, strlen(python_import_query), &error_offset, &error_type);
+        
+        // JavaScript queries
+        queries["javascript_function"] = ts_query_new(languages["javascript"], js_function_query, strlen(js_function_query), &error_offset, &error_type);
+        queries["javascript_class"] = ts_query_new(languages["javascript"], js_class_query, strlen(js_class_query), &error_offset, &error_type);
+        queries["javascript_import"] = ts_query_new(languages["javascript"], js_import_query, strlen(js_import_query), &error_offset, &error_type);
+    }
+    
+    ~TreeSitterImpl() {
+        // Free parser
+        if (parser) {
+            ts_parser_delete(parser);
+        }
+        
+        // Free queries
+        for (auto& query : queries) {
+            if (query.second) {
+                ts_query_delete(query.second);
+            }
+        }
+        
+        // Note: Languages are not owned by us, so we don't delete them
+    }
 };
 
 TreeSitterNER::TreeSitterNER(const SummarizationOptions& options) 
     : options_(options), impl_(std::make_unique<TreeSitterImpl>()) {
-    // Placeholder initialization
+    // TreeSitter implementation is now properly initialized
 }
 
 TreeSitterNER::~TreeSitterNER() = default;
@@ -325,45 +400,108 @@ std::vector<CodeNER::NamedEntity> TreeSitterNER::extractEntities(
     std::vector<NamedEntity> entities;
     
     // Check if we can initialize the parser for this file type
-    if (!initializeParser(filePath)) {
+    std::string language = getLanguage(filePath);
+    if (language.empty() || !impl_->languages.count(language)) {
         // Fallback to regex NER if tree-sitter doesn't support this language
         RegexNER fallback(options_);
         return fallback.extractEntities(content, filePath);
     }
     
-    // Parse the file with tree-sitter and extract entities
-    // This would use tree-sitter's query API to find entities
+    // Set language in parser
+    ts_parser_set_language(impl_->parser, impl_->languages[language]);
     
-    // For now, return empty vector as placeholder
-    // In a real implementation, this would use tree-sitter's API
+    // Parse the file with tree-sitter
+    TSTree* tree = ts_parser_parse_string(
+        impl_->parser,
+        nullptr,  // Previous tree for incremental parsing
+        content.c_str(),
+        static_cast<uint32_t>(content.length())
+    );
+    
+    if (!tree) {
+        // Parsing failed, fallback to regex
+        RegexNER fallback(options_);
+        return fallback.extractEntities(content, filePath);
+    }
+    
+    // Get the root node
+    TSNode root_node = ts_tree_root_node(tree);
+    
+    // Extract entities using queries
+    std::vector<std::string> queryTypes = {"function", "class", "import"};
+    
+    for (const auto& queryType : queryTypes) {
+        std::string queryName = language + "_" + queryType;
+        if (impl_->queries.count(queryName) && impl_->queries[queryName]) {
+            TSQuery* query = impl_->queries[queryName];
+            TSQueryCursor* cursor = ts_query_cursor_new();
+            
+            ts_query_cursor_exec(cursor, query, root_node);
+            
+            TSQueryMatch match;
+            while (ts_query_cursor_next_match(cursor, &match)) {
+                for (uint32_t i = 0; i < match.capture_count; i++) {
+                    TSQueryCapture capture = match.captures[i];
+                    
+                    // Skip captures that aren't entity names
+                    const char* capture_name;
+                    uint32_t capture_name_len;
+                    ts_query_capture_name_for_id(query, capture.index, &capture_name, &capture_name_len);
+                    std::string captureName(capture_name, capture_name_len);
+                    
+                    if (captureName.find(".name") != std::string::npos) {
+                        TSNode node = capture.node;
+                        uint32_t start_byte = ts_node_start_byte(node);
+                        uint32_t end_byte = ts_node_end_byte(node);
+                        
+                        std::string entityName = content.substr(start_byte, end_byte - start_byte);
+                        
+                        EntityType type;
+                        if (captureName.find("function") != std::string::npos) {
+                            type = EntityType::Function;
+                        } else if (captureName.find("class") != std::string::npos) {
+                            type = EntityType::Class;
+                        } else if (captureName.find("import") != std::string::npos) {
+                            type = EntityType::Import;
+                        } else {
+                            continue;  // Skip unknown entity types
+                        }
+                        
+                        entities.push_back(NamedEntity(entityName, type));
+                    }
+                }
+            }
+            
+            ts_query_cursor_delete(cursor);
+        }
+    }
+    
+    // Free the tree
+    ts_tree_delete(tree);
     
     return entities;
 }
 
 bool TreeSitterNER::initializeParser(const fs::path& filePath) const {
-    // Initialize tree-sitter parser for the given file type
+    // Get language for the file
     std::string language = getLanguage(filePath);
     
-    // For now, assume we support common languages
-    return !language.empty();
+    // Check if we support this language
+    return !language.empty() && impl_->languages.count(language) > 0;
 }
 
 std::string TreeSitterNER::getLanguage(const fs::path& filePath) const {
     // Map file extension to tree-sitter language
     std::string extension = filePath.extension().string();
     
-    if (extension == ".cpp" || extension == ".hpp" || extension == ".h") return "cpp";
+    if (extension == ".cpp" || extension == ".hpp" || extension == ".h" || extension == ".cc") return "cpp";
     if (extension == ".c") return "c";
     if (extension == ".py") return "python";
     if (extension == ".js") return "javascript";
     if (extension == ".ts") return "typescript";
     if (extension == ".jsx") return "javascript";
     if (extension == ".tsx") return "typescript";
-    if (extension == ".go") return "go";
-    if (extension == ".java") return "java";
-    if (extension == ".rb") return "ruby";
     
-    // Return empty string for unsupported languages
     return "";
 }
 

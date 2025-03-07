@@ -41,6 +41,43 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json)
 
+# TreeSitter for code parsing
+FetchContent_Declare(
+    tree-sitter
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
+    GIT_TAG v0.20.8
+)
+FetchContent_MakeAvailable(tree-sitter)
+
+# TreeSitter language parsers
+FetchContent_Declare(
+    tree-sitter-cpp
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
+    GIT_TAG v0.20.0
+)
+FetchContent_MakeAvailable(tree-sitter-cpp)
+
+FetchContent_Declare(
+    tree-sitter-c
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c.git
+    GIT_TAG v0.20.2
+)
+FetchContent_MakeAvailable(tree-sitter-c)
+
+FetchContent_Declare(
+    tree-sitter-python
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-python.git
+    GIT_TAG v0.20.2
+)
+FetchContent_MakeAvailable(tree-sitter-python)
+
+FetchContent_Declare(
+    tree-sitter-javascript
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-javascript.git
+    GIT_TAG v0.20.0
+)
+FetchContent_MakeAvailable(tree-sitter-javascript)
+
 # tiktoken-rs for tokenization
 option(USE_TIKTOKEN "Enable tiktoken for token counting" ON)
 if(USE_TIKTOKEN)

@@ -1,14 +1,26 @@
-#include <iostream>
+#include "file_scorer.hpp"
 #include <fstream>
-#include <algorithm>
 #include <regex>
-#include <chrono>
+#include <iostream>
+#include <algorithm>
 #include <sstream>
+#include <numeric>
 #include <unordered_set>
+#include <unordered_map>
+#include <string>
 #include <cmath>
 #include <nlohmann/json.hpp>
-#include <set>
-#include "../include/file_scorer.hpp"
+#include <tree_sitter/api.h>
+
+// Include language headers for TreeSitter
+extern "C" {
+    TSLanguage* tree_sitter_cpp();
+    TSLanguage* tree_sitter_c();
+    TSLanguage* tree_sitter_python();
+    TSLanguage* tree_sitter_javascript();
+}
+
+namespace fs = std::filesystem;
 
 // For convenience
 using json = nlohmann::json;
@@ -887,16 +899,167 @@ float FileScorer::calculateConnectivityScore(const fs::path& filePath,
 }
 
 float FileScorer::analyzeWithTreeSitter(const fs::path& filePath) {
-    // This would typically use the TreeSitter library, but we'll provide a more
-    // sophisticated implementation here even without direct TreeSitter integration
-
     try {
+        // Read file content
         std::ifstream file(filePath);
-        if (!file) {
+        if (!file.is_open()) {
+            std::cerr << "Failed to open file: " << filePath << std::endl;
             return 0.0f;
         }
         
-        std::string line;
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+        
+        // Initialize TreeSitter parser
+        TSParser* parser = ts_parser_new();
+        if (!parser) {
+            std::cerr << "Failed to create TreeSitter parser for " << filePath << std::endl;
+            return 0.0f;
+        }
+        
+        // Determine language based on file extension
+        std::string extension = filePath.extension().string();
+        TSLanguage* language = nullptr;
+        
+        if (extension == ".cpp" || extension == ".hpp" || extension == ".h" || extension == ".cc") {
+            language = tree_sitter_cpp();
+        } else if (extension == ".c") {
+            language = tree_sitter_c();
+        } else if (extension == ".py") {
+            language = tree_sitter_python();
+        } else if (extension == ".js" || extension == ".jsx") {
+            language = tree_sitter_javascript();
+        } else if (extension == ".ts" || extension == ".tsx") {
+            language = tree_sitter_javascript(); // Use JavaScript parser as fallback for TypeScript
+        } else {
+            // Unsupported language, use simple analysis
+            ts_parser_delete(parser);
+            return analyzeFileContent(filePath, content);
+        }
+        
+        // Set language in parser
+        ts_parser_set_language(parser, language);
+        
+        // Parse file
+        TSTree* tree = ts_parser_parse_string(parser, nullptr, content.c_str(), static_cast<uint32_t>(content.length()));
+        if (!tree) {
+            std::cerr << "Failed to parse file: " << filePath << std::endl;
+            ts_parser_delete(parser);
+            return analyzeFileContent(filePath, content);
+        }
+        
+        // Get root node
+        TSNode root = ts_tree_root_node(tree);
+        
+        // Analyze code complexity based on AST
+        float complexity = 0.0f;
+        
+        // Count functions
+        const char* function_query_str = "";
+        if (extension == ".cpp" || extension == ".hpp" || extension == ".h" || extension == ".cc" || extension == ".c") {
+            function_query_str = "(function_definition) @function";
+        } else if (extension == ".py") {
+            function_query_str = "(function_definition) @function";
+        } else if (extension == ".js" || extension == ".jsx" || extension == ".ts" || extension == ".tsx") {
+            function_query_str = "(function_declaration) @function";
+        }
+        
+        uint32_t error_offset;
+        TSQueryError error_type;
+        TSQuery* function_query = ts_query_new(language, function_query_str, strlen(function_query_str), &error_offset, &error_type);
+        
+        if (function_query) {
+            TSQueryCursor* function_cursor = ts_query_cursor_new();
+            ts_query_cursor_exec(function_cursor, function_query, root);
+            
+            // Count functions
+            int function_count = 0;
+            TSQueryMatch match;
+            while (ts_query_cursor_next_match(function_cursor, &match)) {
+                function_count++;
+            }
+            
+            // More functions generally means more complex code
+            complexity += function_count * 0.1f;
+            
+            ts_query_cursor_delete(function_cursor);
+            ts_query_delete(function_query);
+        }
+        
+        // Count classes
+        const char* class_query_str = "";
+        if (extension == ".cpp" || extension == ".hpp" || extension == ".h" || extension == ".cc") {
+            class_query_str = "(class_specifier) @class";
+        } else if (extension == ".py") {
+            class_query_str = "(class_definition) @class";
+        } else if (extension == ".js" || extension == ".jsx" || extension == ".ts" || extension == ".tsx") {
+            class_query_str = "(class_declaration) @class";
+        }
+        
+        TSQuery* class_query = ts_query_new(language, class_query_str, strlen(class_query_str), &error_offset, &error_type);
+        
+        if (class_query) {
+            TSQueryCursor* class_cursor = ts_query_cursor_new();
+            ts_query_cursor_exec(class_cursor, class_query, root);
+            
+            // Count classes
+            int class_count = 0;
+            TSQueryMatch match;
+            while (ts_query_cursor_next_match(class_cursor, &match)) {
+                class_count++;
+            }
+            
+            // Classes add to complexity
+            complexity += class_count * 0.2f;
+            
+            ts_query_cursor_delete(class_cursor);
+            ts_query_delete(class_query);
+        }
+        
+        // Count conditional statements (if, else, switch, etc.)
+        const char* conditional_query_str = "";
+        if (extension == ".cpp" || extension == ".hpp" || extension == ".h" || extension == ".cc" || extension == ".c") {
+            conditional_query_str = "((if_statement) @if (while_statement) @while (for_statement) @for (switch_statement) @switch)";
+        } else if (extension == ".py") {
+            conditional_query_str = "((if_statement) @if (while_statement) @while (for_statement) @for)";
+        } else if (extension == ".js" || extension == ".jsx" || extension == ".ts" || extension == ".tsx") {
+            conditional_query_str = "((if_statement) @if (while_statement) @while (for_statement) @for (switch_statement) @switch)";
+        }
+        
+        TSQuery* conditional_query = ts_query_new(language, conditional_query_str, strlen(conditional_query_str), &error_offset, &error_type);
+        
+        if (conditional_query) {
+            TSQueryCursor* conditional_cursor = ts_query_cursor_new();
+            ts_query_cursor_exec(conditional_cursor, conditional_query, root);
+            
+            // Count conditional statements
+            int conditional_count = 0;
+            TSQueryMatch match;
+            while (ts_query_cursor_next_match(conditional_cursor, &match)) {
+                conditional_count++;
+            }
+            
+            // Conditionals add to complexity
+            complexity += conditional_count * 0.05f;
+            
+            ts_query_cursor_delete(conditional_cursor);
+            ts_query_delete(conditional_query);
+        }
+        
+        // Clean up
+        ts_tree_delete(tree);
+        ts_parser_delete(parser);
+        
+        // Normalize complexity score (0.0 - 1.0)
+        return std::min(1.0f, complexity);
+    } catch (const std::exception& e) {
+        std::cerr << "Error analyzing file with tree-sitter: " << filePath << ": " << e.what() << std::endl;
+        return analyzeFileContent(filePath);
+    }
+}
+
+float FileScorer::analyzeFileContent(const fs::path& filePath, const std::string& content) {
+    try {
         int totalLines = 0;
         int codeLines = 0;
         int commentLines = 0;
@@ -909,8 +1072,6 @@ float FileScorer::analyzeWithTreeSitter(const fs::path& filePath) {
         int scopeDepth = 0;
         std::string extension = filePath.extension().string();
         bool inMultiLineComment = false;
-        bool inString = false;
-        char stringDelimiter = 0;
         
         // Regex patterns for detecting code structures based on language
         std::regex functionPattern;
@@ -956,7 +1117,11 @@ float FileScorer::analyzeWithTreeSitter(const fs::path& filePath) {
             commentEndPattern = std::regex("=end");
         }
         
-        while (std::getline(file, line)) {
+        // Process file line by line
+        std::istringstream stream(content);
+        std::string line;
+        
+        while (std::getline(stream, line)) {
             totalLines++;
             
             // Trim whitespace
@@ -1050,16 +1215,36 @@ float FileScorer::analyzeWithTreeSitter(const fs::path& filePath) {
         // Calculate final score
         float finalScore = (density * 0.6f) + structureBonus + commentBonus - commentPenalty - importPenalty;
         
-        // Scale by the configured weight
-        return std::min(1.0f, std::max(0.0f, finalScore)) * config_.codeDensityWeight;
+        // Normalize score
+        return std::min(1.0f, std::max(0.0f, finalScore));
     }
     catch (const std::exception& e) {
-        std::cerr << "Error analyzing file with tree-sitter: " << filePath << ": " << e.what() << std::endl;
+        std::cerr << "Error analyzing file content: " << filePath << ": " << e.what() << std::endl;
         
         // Fall back to simple file type based scoring
         if (isSourceCodeFile(filePath)) {
-            return 0.5f * config_.codeDensityWeight;
+            return 0.5f;
         }
-        return 0.2f * config_.codeDensityWeight;
+        return 0.2f;
+    }
+}
+
+float FileScorer::analyzeFileContent(const fs::path& filePath) {
+    try {
+        // Read file content
+        std::ifstream file(filePath);
+        if (!file.is_open()) {
+            std::cerr << "Failed to open file: " << filePath << std::endl;
+            return 0.0f;
+        }
+        
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+        
+        return analyzeFileContent(filePath, content);
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error reading file: " << filePath << ": " << e.what() << std::endl;
+        return 0.0f;
     }
 } 
