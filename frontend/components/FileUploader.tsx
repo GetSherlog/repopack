@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
+import SummarizationOptions, { SummarizationOptions as SummarizationOptionsType, defaultSummarizationOptions } from './SummarizationOptions'
 
 // Add type declaration for HTML input attributes
 declare module 'react' {
@@ -21,6 +22,7 @@ export default function FileUploader({ onFilesUploaded, isProcessing }: FileUplo
   const [includePatterns, setIncludePatterns] = useState<string>('')
   const [excludePatterns, setExcludePatterns] = useState<string>('')
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false)
+  const [summarizationOptions, setSummarizationOptions] = useState<SummarizationOptionsType>(defaultSummarizationOptions)
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     // Handle folder uploads by recursively traversing the FileSystemEntry structure
@@ -40,9 +42,23 @@ export default function FileUploader({ onFilesUploaded, isProcessing }: FileUplo
     setFiles(prev => prev.filter((_, i) => i !== index))
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
     if (files.length > 0) {
-      onFilesUploaded(files, includePatterns, excludePatterns)
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('files', file);
+      });
+
+      formData.append('include-patterns', includePatterns);
+      formData.append('exclude-patterns', excludePatterns);
+
+      if (summarizationOptions.enabled) {
+        formData.append('summarization', JSON.stringify(summarizationOptions));
+      }
+
+      onFilesUploaded(files, includePatterns, excludePatterns);
     }
   }
 
@@ -199,6 +215,11 @@ export default function FileUploader({ onFilesUploaded, isProcessing }: FileUplo
           </button>
         </div>
       </div>
+
+      <SummarizationOptions 
+        options={summarizationOptions}
+        onChange={setSummarizationOptions}
+      />
     </div>
   )
 }

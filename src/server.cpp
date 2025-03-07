@@ -208,22 +208,162 @@ public:
                 }
             }
 
-            // Create repomix options
-            RepomixOptions options;
-            options.inputDir = tempDir;
-            options.verbose = false;
-            options.numThreads = std::thread::hardware_concurrency();
-            options.format = OutputFormat::Plain; // Default to plain text
-            
-            // Check if format parameter was provided
-            if (req->getParameter("format") == "markdown") {
-                options.format = OutputFormat::Markdown;
-            } else if (req->getParameter("format") == "xml") {
-                options.format = OutputFormat::XML;
+            // Extract format option
+            std::string formatStr = "plain";
+            if (req->getJsonObject() && req->getJsonObject()->isMember("format")) {
+                formatStr = (*req->getJsonObject())["format"].asString();
             }
             
-            // Don't write to a file in server mode
-            options.outputFile = "";
+            // Extract other options
+            bool verbose = false;
+            if (req->getJsonObject() && req->getJsonObject()->isMember("verbose")) {
+                verbose = (*req->getJsonObject())["verbose"].asBool();
+            }
+            
+            bool showTiming = false;
+            if (req->getJsonObject() && req->getJsonObject()->isMember("timing")) {
+                showTiming = (*req->getJsonObject())["timing"].asBool();
+            }
+            
+            // Parse summarization options
+            SummarizationOptions summarizationOptions;
+            if (req->getJsonObject() && req->getJsonObject()->isMember("summarization")) {
+                auto& summaryJson = (*req->getJsonObject())["summarization"];
+                
+                if (summaryJson.isMember("enabled")) {
+                    summarizationOptions.enabled = summaryJson["enabled"].asBool();
+                }
+                
+                if (summaryJson.isMember("includeFirstNLines")) {
+                    summarizationOptions.includeFirstNLines = summaryJson["includeFirstNLines"].asBool();
+                }
+                
+                if (summaryJson.isMember("firstNLinesCount")) {
+                    summarizationOptions.firstNLinesCount = summaryJson["firstNLinesCount"].asInt();
+                }
+                
+                if (summaryJson.isMember("includeSignatures")) {
+                    summarizationOptions.includeSignatures = summaryJson["includeSignatures"].asBool();
+                }
+                
+                if (summaryJson.isMember("includeDocstrings")) {
+                    summarizationOptions.includeDocstrings = summaryJson["includeDocstrings"].asBool();
+                }
+                
+                if (summaryJson.isMember("includeSnippets")) {
+                    summarizationOptions.includeSnippets = summaryJson["includeSnippets"].asBool();
+                }
+                
+                if (summaryJson.isMember("snippetsCount")) {
+                    summarizationOptions.snippetsCount = summaryJson["snippetsCount"].asInt();
+                }
+                
+                if (summaryJson.isMember("includeReadme")) {
+                    summarizationOptions.includeReadme = summaryJson["includeReadme"].asBool();
+                }
+                
+                if (summaryJson.isMember("useTreeSitter")) {
+                    summarizationOptions.useTreeSitter = summaryJson["useTreeSitter"].asBool();
+                }
+                
+                if (summaryJson.isMember("fileSizeThreshold")) {
+                    summarizationOptions.fileSizeThreshold = summaryJson["fileSizeThreshold"].asUInt();
+                }
+                
+                if (summaryJson.isMember("maxSummaryLines")) {
+                    summarizationOptions.maxSummaryLines = summaryJson["maxSummaryLines"].asInt();
+                }
+                
+                // Parse the new NER options
+                if (summaryJson.isMember("includeEntityRecognition")) {
+                    summarizationOptions.includeEntityRecognition = summaryJson["includeEntityRecognition"].asBool();
+                }
+                
+                if (summaryJson.isMember("includeClassNames")) {
+                    summarizationOptions.includeClassNames = summaryJson["includeClassNames"].asBool();
+                }
+                
+                if (summaryJson.isMember("includeFunctionNames")) {
+                    summarizationOptions.includeFunctionNames = summaryJson["includeFunctionNames"].asBool();
+                }
+                
+                if (summaryJson.isMember("includeVariableNames")) {
+                    summarizationOptions.includeVariableNames = summaryJson["includeVariableNames"].asBool();
+                }
+                
+                if (summaryJson.isMember("includeEnumValues")) {
+                    summarizationOptions.includeEnumValues = summaryJson["includeEnumValues"].asBool();
+                }
+                
+                if (summaryJson.isMember("includeImports")) {
+                    summarizationOptions.includeImports = summaryJson["includeImports"].asBool();
+                }
+                
+                if (summaryJson.isMember("maxEntities")) {
+                    summarizationOptions.maxEntities = summaryJson["maxEntities"].asInt();
+                }
+                
+                if (summaryJson.isMember("groupEntitiesByType")) {
+                    summarizationOptions.groupEntitiesByType = summaryJson["groupEntitiesByType"].asBool();
+                }
+
+                // Parse NER method
+                if (summaryJson.isMember("nerMethod")) {
+                    std::string nerMethod = summaryJson["nerMethod"].asString();
+                    if (nerMethod == "Regex") {
+                        summarizationOptions.nerMethod = SummarizationOptions::NERMethod::Regex;
+                    } else if (nerMethod == "TreeSitter") {
+                        summarizationOptions.nerMethod = SummarizationOptions::NERMethod::TreeSitter;
+                    } else if (nerMethod == "ML") {
+                        summarizationOptions.nerMethod = SummarizationOptions::NERMethod::ML;
+                    } else if (nerMethod == "Hybrid") {
+                        summarizationOptions.nerMethod = SummarizationOptions::NERMethod::Hybrid;
+                    }
+                }
+
+                // Parse ML-NER specific options
+                if (summaryJson.isMember("useMLForLargeFiles")) {
+                    summarizationOptions.useMLForLargeFiles = summaryJson["useMLForLargeFiles"].asBool();
+                }
+
+                if (summaryJson.isMember("mlNerSizeThreshold")) {
+                    summarizationOptions.mlNerSizeThreshold = summaryJson["mlNerSizeThreshold"].asUInt();
+                }
+
+                if (summaryJson.isMember("mlModelPath")) {
+                    summarizationOptions.mlModelPath = summaryJson["mlModelPath"].asString();
+                }
+
+                if (summaryJson.isMember("cacheMLResults")) {
+                    summarizationOptions.cacheMLResults = summaryJson["cacheMLResults"].asBool();
+                }
+
+                if (summaryJson.isMember("mlConfidenceThreshold")) {
+                    summarizationOptions.mlConfidenceThreshold = summaryJson["mlConfidenceThreshold"].asFloat();
+                }
+
+                if (summaryJson.isMember("maxMLProcessingTimeMs")) {
+                    summarizationOptions.maxMLProcessingTimeMs = summaryJson["maxMLProcessingTimeMs"].asInt();
+                }
+
+                // Parse advanced visualization options
+                if (summaryJson.isMember("includeEntityRelationships")) {
+                    summarizationOptions.includeEntityRelationships = summaryJson["includeEntityRelationships"].asBool();
+                }
+
+                if (summaryJson.isMember("generateEntityGraph")) {
+                    summarizationOptions.generateEntityGraph = summaryJson["generateEntityGraph"].asBool();
+                }
+            }
+            
+            // Set options for repomix
+            RepomixOptions options;
+            options.inputDir = tempDir;
+            options.format = formatStr == "markdown" ? OutputFormat::Markdown : 
+                             formatStr == "xml" ? OutputFormat::XML : OutputFormat::Plain;
+            options.verbose = verbose;
+            options.showTiming = showTiming;
+            options.summarization = summarizationOptions;  // Set summarization options
             
             // Process the uploaded files
             Repomix repomix(options);
@@ -497,37 +637,63 @@ public:
 
     void getCapabilities(const drogon::HttpRequestPtr& req, 
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-        // Use Json::Value for Drogon responses
-        Json::Value drogonResult;
-        json result; // nlohmann::json for internal processing
+        json capabilities;
+        capabilities["version"] = "1.0.0";
+        capabilities["formats"] = json::array({"plain", "markdown", "xml"});
+        capabilities["features"] = json::array({"file_upload", "github_repo", "timing_info"});
         
-        try {
-            // Get hardware concurrency
-            unsigned int availableThreads = std::thread::hardware_concurrency();
-            
-            result["availableThreads"] = availableThreads;
-            result["serverVersion"] = "1.0.0";
-            result["supportsMultithreading"] = true;
-            
-            // Convert to Json::Value for response
-            drogonResult["availableThreads"] = availableThreads;
-            drogonResult["serverVersion"] = "1.0.0";
-            drogonResult["supportsMultithreading"] = true;
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
-            resp->setStatusCode(drogon::k200OK);
-            
-        } catch (const std::exception& e) {
-            result["success"] = false;
-            result["error"] = e.what();
-            
-            // Convert nlohmann::json to Json::Value for the response
-            drogonResult["success"] = false;
-            drogonResult["error"] = e.what();
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
-            resp->setStatusCode(drogon::k500InternalServerError);
+        // Add summarization features
+        json summarizationFeatures;
+        summarizationFeatures["enabled"] = true;
+        summarizationFeatures["options"] = {
+            {"includeFirstNLines", true},
+            {"firstNLinesCount", 50},
+            {"includeSignatures", true},
+            {"includeDocstrings", true},
+            {"includeSnippets", true},
+            {"snippetsCount", 3},
+            {"includeReadme", true},
+            {"useTreeSitter", true},
+            {"fileSizeThreshold", 10240},
+            {"maxSummaryLines", 200}
+        };
+        
+        capabilities["summarization"] = summarizationFeatures;
+        
+        // Convert nlohmann::json to Json::Value for Drogon
+        Json::Value drogonJson;
+        drogonJson["version"] = capabilities["version"].get<std::string>();
+        
+        // Add formats array
+        Json::Value formatsArray;
+        for (const auto& format : capabilities["formats"]) {
+            formatsArray.append(format.get<std::string>());
         }
-
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonResult);
+        drogonJson["formats"] = formatsArray;
+        
+        // Add features array
+        Json::Value featuresArray;
+        for (const auto& feature : capabilities["features"]) {
+            featuresArray.append(feature.get<std::string>());
+        }
+        drogonJson["features"] = featuresArray;
+        
+        // Add summarization features
+        Json::Value summaryJson;
+        summaryJson["enabled"] = summarizationFeatures["enabled"].get<bool>();
+        
+        Json::Value optionsJson;
+        for (const auto& [key, value] : summarizationFeatures["options"].items()) {
+            if (value.is_boolean()) {
+                optionsJson[key] = value.get<bool>();
+            } else if (value.is_number_integer()) {
+                optionsJson[key] = value.get<int>();
+            }
+        }
+        summaryJson["options"] = optionsJson;
+        drogonJson["summarization"] = summaryJson;
+        
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(drogonJson);
         callback(resp);
     }
 

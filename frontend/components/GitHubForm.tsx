@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import SummarizationOptions, { SummarizationOptions as SummarizationOptionsType, defaultSummarizationOptions } from './SummarizationOptions'
 
 interface GitHubFormProps {
   onRepoSubmit: (url: string, includePatterns: string, excludePatterns: string) => void;
@@ -14,6 +15,10 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
   const [excludePatterns, setExcludePatterns] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [summarizationOptions, setSummarizationOptions] = useState<SummarizationOptionsType>(defaultSummarizationOptions)
+  const [showVerbose, setShowVerbose] = useState(false)
+  const [showTiming, setShowTiming] = useState(false)
+  const [format, setFormat] = useState('plain')
 
   // Load token from localStorage if available
   useEffect(() => {
@@ -37,21 +42,47 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
     return githubPattern.test(url)
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
     if (!repoUrl.trim()) {
       setError('Please enter a GitHub repository URL')
       return
     }
-
-    if (!validateGitHubUrl(repoUrl)) {
-      setError('Please enter a valid GitHub repository URL (e.g., https://github.com/username/repo)')
+    
+    // Validate URL format
+    if (!repoUrl.match(/^https:\/\/github\.com\/[^/]+\/[^/]+/)) {
+      setError('Please enter a valid GitHub repository URL (https://github.com/owner/repo)')
       return
     }
 
     setError(null)
-    onRepoSubmit(repoUrl, includePatterns, excludePatterns)
+    try {
+      const response = await fetch('/api/process_repo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: repoUrl,
+          include_patterns: includePatterns,
+          exclude_patterns: excludePatterns,
+          token: githubToken,
+          format: format,
+          verbose: showVerbose,
+          timing: showTiming,
+          summarization: summarizationOptions.enabled ? summarizationOptions : undefined
+        }),
+      })
+
+      if (response.ok) {
+        onRepoSubmit(repoUrl, includePatterns, excludePatterns)
+      } else {
+        setError('Failed to process repository')
+      }
+    } catch (error) {
+      setError('An error occurred')
+    }
   }
 
   const toggleAdvanced = () => {
@@ -164,6 +195,12 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
               </div>
             </div>
           )}
+
+          {/* Summarization Options */}
+          <SummarizationOptions 
+            options={summarizationOptions}
+            onChange={setSummarizationOptions}
+          />
 
           <div className="mt-6 flex justify-end">
             <button

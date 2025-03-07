@@ -109,6 +109,9 @@ Repomix::Repomix(const RepomixOptions& options)
     
     // Create file processor with pattern matcher
     fileProcessor_ = std::make_unique<FileProcessor>(*patternMatcher_, options_.numThreads);
+    
+    // Set summarization options
+    fileProcessor_->setSummarizationOptions(options_.summarization);
 }
 
 bool Repomix::run() {
@@ -284,49 +287,153 @@ std::string Repomix::generateDirectoryTree(const fs::path& dir, int level) const
 }
 
 std::string Repomix::formatOutput(const std::vector<FileProcessor::ProcessedFile>& files) const {
-    // Calculate initial buffer size based on all file contents plus overhead
-    size_t estimatedSize = 0;
-    for (const auto& file : files) {
-        // Add file content size plus overhead for formatting (headers, etc.)
-        estimatedSize += file.content.size() + file.path.string().size() + 100;
-    }
-    
-    // Prepare buffer with estimated size
-    std::string result;
-    result.reserve(estimatedSize);
+    std::stringstream output;
     
     switch (options_.format) {
-        case OutputFormat::Markdown:
-            result += "## File Contents\n";
+        case OutputFormat::Markdown: {
+            output << "# Repository Summary\n\n";
+            output << "| Files | Lines | Size |\n";
+            output << "|-------|-------|------|\n";
+            output << "| " << totalFiles_ << " | " << totalLines_ << " | " 
+                    << (totalBytes_ / 1024) << " KB |\n\n";
+            
+            output << "## Directory Structure\n\n";
+            output << "```\n";
+            output << generateDirectoryTree(options_.inputDir);
+            output << "```\n\n";
+            
+            output << "## File Contents\n\n";
+            
             for (const auto& file : files) {
-                result += "### " + file.path.string() + "\n";
-                result += "```\n";
-                result += file.content + "\n";
-                result += "```\n\n";
+                std::string relPath = fs::relative(file.path, options_.inputDir).string();
+                std::string extension = file.path.extension().string();
+                
+                output << "### " << relPath << "\n\n";
+                
+                // Output file statistics
+                output << "*" << file.lineCount << " lines, " << (file.byteSize / 1024) << " KB*\n\n";
+                
+                // Special handling for README files when in Markdown format
+                if (options_.summarization.includeReadme && 
+                    options_.summarization.enabled && 
+                    fileProcessor_->isReadmeFile(file.path)) {
+                    output << file.content << "\n\n";
+                    continue;
+                }
+                
+                // Add file content with correct language highlighting in markdown
+                output << "```";
+                if (extension == ".cpp" || extension == ".hpp" || extension == ".h") {
+                    output << "cpp";
+                } else if (extension == ".js") {
+                    output << "javascript";
+                } else if (extension == ".py") {
+                    output << "python";
+                } else if (extension == ".ts") {
+                    output << "typescript";
+                } else if (extension == ".jsx" || extension == ".tsx") {
+                    output << "jsx";
+                } else if (extension == ".html") {
+                    output << "html";
+                } else if (extension == ".css") {
+                    output << "css";
+                } else if (extension == ".json") {
+                    output << "json";
+                } else if (extension == ".md") {
+                    output << "markdown";
+                } else if (extension == ".sh") {
+                    output << "bash";
+                }
+                output << "\n";
+                
+                // Apply summarization if enabled and file is large
+                if (options_.summarization.enabled && file.byteSize > options_.summarization.fileSizeThreshold) {
+                    output << fileProcessor_->summarizeFile(file);
+                } else {
+                    output << file.content;
+                }
+                
+                output << "```\n\n";
             }
             break;
+        }
+        
+        case OutputFormat::XML: {
+            output << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+            output << "<repository>\n";
+            output << "  <summary>\n";
+            output << "    <files>" << totalFiles_ << "</files>\n";
+            output << "    <lines>" << totalLines_ << "</lines>\n";
+            output << "    <size>" << totalBytes_ << "</size>\n";
+            output << "  </summary>\n";
             
-        case OutputFormat::XML:
-            result += "<repository>\n";
+            // Directory structure representation
+            output << "  <directory_structure><![CDATA[\n";
+            output << generateDirectoryTree(options_.inputDir);
+            output << "]]></directory_structure>\n";
+            
+            output << "  <files>\n";
+            
             for (const auto& file : files) {
-                result += "  <file path=\"" + file.path.string() + "\">\n";
-                result += "    <![CDATA[" + file.content + "]]>\n";
-                result += "  </file>\n";
+                std::string relPath = fs::relative(file.path, options_.inputDir).string();
+                
+                output << "    <file>\n";
+                output << "      <path>" << relPath << "</path>\n";
+                output << "      <lines>" << file.lineCount << "</lines>\n";
+                output << "      <size>" << file.byteSize << "</size>\n";
+                output << "      <content><![CDATA[";
+                
+                // Apply summarization if enabled and file is large
+                if (options_.summarization.enabled && file.byteSize > options_.summarization.fileSizeThreshold) {
+                    output << fileProcessor_->summarizeFile(file);
+                } else {
+                    output << file.content;
+                }
+                
+                output << "]]></content>\n";
+                output << "    </file>\n";
             }
-            result += "</repository>\n";
-            break;
             
+            output << "  </files>\n";
+            output << "</repository>\n";
+            break;
+        }
+        
         case OutputFormat::Plain:
-        default:
-            result += "## File Contents\n";
+        default: {
+            output << "Repository Summary\n";
+            output << "==================\n";
+            output << "Files: " << totalFiles_ << "\n";
+            output << "Lines: " << totalLines_ << "\n";
+            output << "Size: " << (totalBytes_ / 1024) << " KB\n\n";
+            
+            output << "Directory Structure\n";
+            output << "------------------\n";
+            output << generateDirectoryTree(options_.inputDir) << "\n\n";
+            
+            output << "File Contents\n";
+            output << "-------------\n";
+            
             for (const auto& file : files) {
-                result += "--- " + file.path.string() + " ---\n";
-                result += file.content + "\n\n";
+                std::string relPath = fs::relative(file.path, options_.inputDir).string();
+                
+                output << "=== " << relPath << " ===\n";
+                output << "Lines: " << file.lineCount << ", Size: " << (file.byteSize / 1024) << " KB\n";
+                
+                // Apply summarization if enabled and file is large
+                if (options_.summarization.enabled && file.byteSize > options_.summarization.fileSizeThreshold) {
+                    output << fileProcessor_->summarizeFile(file);
+                } else {
+                    output << file.content;
+                }
+                
+                output << "\n\n";
             }
             break;
+        }
     }
     
-    return result;
+    return output.str();
 }
 
 // Get the output content directly (useful for WASM)

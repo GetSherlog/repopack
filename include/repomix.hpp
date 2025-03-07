@@ -16,6 +16,54 @@ enum class OutputFormat {
     XML
 };
 
+// Smart file summarization options
+struct SummarizationOptions {
+    bool enabled = false;                // Enable smart summarization
+    bool includeFirstNLines = true;      // Include first N lines of the file
+    int firstNLinesCount = 50;           // Number of first lines to include
+    bool includeSignatures = true;       // Include function/class signatures
+    bool includeDocstrings = true;       // Include docstrings and comments
+    bool includeSnippets = false;        // Include representative snippets
+    int snippetsCount = 3;               // Number of representative snippets to include
+    bool includeReadme = true;           // Include README files
+    bool useTreeSitter = true;           // Use Tree-sitter for better summarization
+    size_t fileSizeThreshold = 10240;    // Files larger than this (in bytes) will be summarized
+    int maxSummaryLines = 200;           // Maximum lines to include in the summary
+    
+    // Named Entity Recognition options
+    bool includeEntityRecognition = false;  // Enable Named Entity Recognition
+    
+    // NER method selection
+    enum class NERMethod {
+        Regex,          // Simple regex-based NER (fastest, least accurate)
+        TreeSitter,     // Tree-sitter based NER (good balance of speed and accuracy)
+        ML,             // Machine Learning based NER (most accurate, slowest)
+        Hybrid          // Use Tree-sitter for small files, ML for large files
+    };
+    NERMethod nerMethod = NERMethod::Regex;  // Default to regex for compatibility
+    
+    // ML-NER specific options
+    bool useMLForLargeFiles = false;       // Use ML for large files (hybrid mode)
+    size_t mlNerSizeThreshold = 102400;    // 100KB threshold for ML-NER
+    std::string mlModelPath = "";          // Path to ONNX model (empty = use bundled)
+    bool cacheMLResults = true;            // Cache ML results to avoid repeat processing
+    float mlConfidenceThreshold = 0.7;     // Confidence threshold for ML predictions
+    int maxMLProcessingTimeMs = 5000;      // Maximum time to spend on ML processing before fallback
+    
+    // Entity types to include
+    bool includeClassNames = true;       // Include class names in entity list
+    bool includeFunctionNames = true;    // Include function/method names in entity list
+    bool includeVariableNames = true;    // Include variable names in entity list
+    bool includeEnumValues = true;       // Include enum values in entity list
+    bool includeImports = true;          // Include imported modules/libraries in entity list
+    int maxEntities = 100;               // Maximum number of entities to include
+    bool groupEntitiesByType = true;     // Group entities by their type (class, function, etc.)
+    
+    // Advanced visualization options
+    bool includeEntityRelationships = false;  // Include relationships between entities
+    bool generateEntityGraph = false;         // Generate a visual graph of entities and relationships
+};
+
 struct RepomixOptions {
     fs::path inputDir;
     fs::path outputFile = "repomix-output.txt";
@@ -25,6 +73,7 @@ struct RepomixOptions {
     unsigned int numThreads = std::thread::hardware_concurrency();
     std::string includePatterns; // Comma-separated list of glob patterns to include
     std::string excludePatterns; // Comma-separated list of glob patterns to exclude
+    SummarizationOptions summarization; // Smart summarization options
 };
 
 class Repomix {

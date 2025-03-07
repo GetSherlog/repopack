@@ -3,12 +3,21 @@ add_library(repomix_lib STATIC
     repomix.cpp
     file_processor.cpp
     pattern_matcher.cpp
+    code_ner.cpp
 )
 
 # Link required libraries to the core library
-target_link_libraries(repomix_lib PRIVATE 
+target_link_libraries(repomix_lib PUBLIC 
+    ${CMAKE_THREAD_LIBS_INIT}
     nlohmann_json::nlohmann_json
 )
+
+# Add ONNX Runtime if enabled
+if(USE_ONNX_RUNTIME)
+    target_include_directories(repomix_lib PRIVATE ${ONNX_RUNTIME_INCLUDE_DIRS})
+    target_link_libraries(repomix_lib PUBLIC ${ONNX_RUNTIME_LIBRARIES})
+    add_dependencies(repomix_lib download_models)
+endif()
 
 # Main CLI executable
 add_executable(repomix 
