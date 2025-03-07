@@ -1,6 +1,6 @@
-# Repomix++
+# repopack-cpp
 
-Repomix++ is a high-performance, C++-based tool designed to package the contents of a software repository (local or remote) into a single, AI-friendly text file. This file is intended for consumption by large language models (LLMs) for tasks such as code review, documentation generation, architecture analysis, and other AI-assisted development workflows.
+repopack-cpp is a high-performance, C++-based tool designed to package the contents of a software repository (local or remote) into a single, AI-friendly text file. This file is intended for consumption by large language models (LLMs) for tasks such as code review, documentation generation, architecture analysis, and other AI-assisted development workflows.
 
 ## Features
 
@@ -25,12 +25,12 @@ repopack-cpp/
 ├── include/               # Header files
 │   ├── file_processor.hpp # File processing with multithreading
 │   ├── pattern_matcher.hpp # Pattern matching
-│   └── repomix.hpp        # Main orchestration class
+│   └── repopack.hpp        # Main orchestration class
 ├── src/                   # Implementation files
 │   ├── file_processor.cpp
 │   ├── main.cpp           # CLI entry point
 │   ├── pattern_matcher.cpp
-│   ├── repomix.cpp
+│   ├── repopack.cpp
 │   └── server.cpp         # API server implementation
 ├── test/                  # Test files
 │   ├── file_processor_test.cpp
@@ -46,7 +46,7 @@ repopack-cpp/
 
 ## Server Architecture
 
-Repomix uses a C++ backend server with a Next.js frontend:
+repopack-cpp uses a C++ backend server with a Next.js frontend:
 
 1. **Backend**: C++ server built with the Drogon framework that processes repositories and files
 2. **Frontend**: Next.js application that provides a user interface for interacting with the backend
@@ -60,7 +60,7 @@ The backend exposes the following API endpoints:
 
 ### Using Docker
 
-Repomix is designed to run with Docker, which handles all dependencies automatically:
+repopack-cpp is designed to run with Docker, which handles all dependencies automatically:
 
 ```bash
 # Make the script executable (if needed)
@@ -77,7 +77,7 @@ This will:
 
 ### Docker Commands
 
-Some useful Docker commands for managing Repomix:
+Some useful Docker commands for managing repopack-cpp:
 
 ```bash
 # View logs from both services
@@ -112,13 +112,13 @@ The Docker container also includes a command-line interface for processing repos
 docker-compose exec backend bash
 
 # Process a local directory
-./build/bin/repomix --input /path/to/repository --output output.txt
+./build/bin/repopack --input /path/to/repository --output output.txt
 
 # Use markdown format with timing information
-./build/bin/repomix --input /path/to/repository --format markdown --timing
+./build/bin/repopack --input /path/to/repository --format markdown --timing
 
 # Enable verbose output
-./build/bin/repomix --input /path/to/repository --verbose
+./build/bin/repopack --input /path/to/repository --verbose
 ```
 
 ### Command-line Options
@@ -127,7 +127,7 @@ docker-compose exec backend bash
 - `-i, --input`: Local directory path to process (required)
 
 #### Output Options
-- `-o, --output`: Output file (default: repomix-output.txt)
+- `-o, --output`: Output file (default: repopack-output.txt)
 - `-f, --format`: Output format: plain, markdown, xml (default: plain)
 
 #### Other Options
@@ -148,4 +148,4 @@ MIT
 
 ## Acknowledgements
 
-This project is a reimplementation and enhancement of the original [repomix](https://github.com/yamadashy/repomix) tool written in TypeScript.
+This project is a reimplementation and enhancement of the original [repopack](https://github.com/yamadashy/repopack) tool written in TypeScript.
