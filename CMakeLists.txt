@@ -78,6 +78,47 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tree-sitter-javascript)
 
+# Build TreeSitter library
+add_library(tree-sitter STATIC
+    ${tree-sitter_SOURCE_DIR}/lib/src/lib.c
+)
+target_include_directories(tree-sitter PUBLIC
+    ${tree-sitter_SOURCE_DIR}/lib/include
+)
+
+# Build TreeSitter language parsers
+add_library(tree-sitter-cpp STATIC
+    ${tree-sitter-cpp_SOURCE_DIR}/src/parser.c
+)
+target_include_directories(tree-sitter-cpp PUBLIC
+    ${tree-sitter-cpp_SOURCE_DIR}/src
+    ${tree-sitter_SOURCE_DIR}/lib/include
+)
+
+add_library(tree-sitter-c STATIC
+    ${tree-sitter-c_SOURCE_DIR}/src/parser.c
+)
+target_include_directories(tree-sitter-c PUBLIC
+    ${tree-sitter-c_SOURCE_DIR}/src
+    ${tree-sitter_SOURCE_DIR}/lib/include
+)
+
+add_library(tree-sitter-python STATIC
+    ${tree-sitter-python_SOURCE_DIR}/src/parser.c
+)
+target_include_directories(tree-sitter-python PUBLIC
+    ${tree-sitter-python_SOURCE_DIR}/src
+    ${tree-sitter_SOURCE_DIR}/lib/include
+)
+
+add_library(tree-sitter-javascript STATIC
+    ${tree-sitter-javascript_SOURCE_DIR}/src/parser.c
+)
+target_include_directories(tree-sitter-javascript PUBLIC
+    ${tree-sitter-javascript_SOURCE_DIR}/src
+    ${tree-sitter_SOURCE_DIR}/lib/include
+)
+
 # tiktoken-rs for tokenization
 option(USE_TIKTOKEN "Enable tiktoken for token counting" ON)
 if(USE_TIKTOKEN)

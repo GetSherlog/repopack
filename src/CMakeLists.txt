@@ -11,6 +11,20 @@ add_library(repomix_lib STATIC
 target_link_libraries(repomix_lib PUBLIC 
     ${CMAKE_THREAD_LIBS_INIT}
     nlohmann_json::nlohmann_json
+    tree-sitter
+    tree-sitter-cpp
+    tree-sitter-c
+    tree-sitter-python
+    tree-sitter-javascript
+)
+
+# Add include directories for TreeSitter
+target_include_directories(repomix_lib PRIVATE
+    ${tree-sitter_SOURCE_DIR}/lib/include
+    ${tree-sitter-cpp_SOURCE_DIR}/src
+    ${tree-sitter-c_SOURCE_DIR}/src
+    ${tree-sitter-python_SOURCE_DIR}/src
+    ${tree-sitter-javascript_SOURCE_DIR}/src
 )
 
 # Add ONNX Runtime if enabled
@@ -37,6 +51,11 @@ target_include_directories(repomix PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${CLI11_SOURCE_DIR}/include
     ${nlohmann_json_SOURCE_DIR}/include
+    ${tree-sitter_SOURCE_DIR}/lib/include
+    ${tree-sitter-cpp_SOURCE_DIR}/src
+    ${tree-sitter-c_SOURCE_DIR}/src
+    ${tree-sitter-python_SOURCE_DIR}/src
+    ${tree-sitter-javascript_SOURCE_DIR}/src
 )
 
 target_link_libraries(repomix PRIVATE
@@ -46,6 +65,11 @@ target_link_libraries(repomix PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto
     CURL::libcurl
+    tree-sitter
+    tree-sitter-cpp
+    tree-sitter-c
+    tree-sitter-python
+    tree-sitter-javascript
 )
 
 # Link tiktoken if enabled
@@ -78,6 +102,22 @@ target_link_libraries(repomix_server PRIVATE
     Drogon::Drogon
     nlohmann_json::nlohmann_json
     CURL::libcurl
+    tree-sitter
+    tree-sitter-cpp
+    tree-sitter-c
+    tree-sitter-python
+    tree-sitter-javascript
+)
+
+# Target include directories for server
+target_include_directories(repomix_server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/include
+    ${tree-sitter_SOURCE_DIR}/lib/include
+    ${tree-sitter-cpp_SOURCE_DIR}/src
+    ${tree-sitter-c_SOURCE_DIR}/src
+    ${tree-sitter-python_SOURCE_DIR}/src
+    ${tree-sitter-javascript_SOURCE_DIR}/src
 )
 
 # Installation
