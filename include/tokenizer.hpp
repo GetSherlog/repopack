@@ -2,14 +2,15 @@
 
 #include <string>
 #include <cstdint>
-#include <memory>
 #include <vector>
 #include <unordered_map>
+#include <memory>
 
-// Forward declaration to hide tiktoken implementation details
-namespace tiktoken_cpp {
-    class Encoding;
-}
+// Check if tiktoken is enabled
+#ifdef USE_TIKTOKEN
+// Forward declaration for cpp-tiktoken
+class GptEncoding;
+#endif
 
 // Supported tokenizer encodings
 enum class TokenizerEncoding {
@@ -41,16 +42,19 @@ public:
     static std::string encodingToString(TokenizerEncoding encoding);
 
 private:
-    // Pointer to the tiktoken Encoding implementation
-    std::unique_ptr<tiktoken_cpp::Encoding> encoding_;
     TokenizerEncoding encodingType_;
     
     // Cache string representation of encoding type
     std::string encodingName_;
     
+#ifdef USE_TIKTOKEN
+    // Pointer to the cpp-tiktoken encoder
+    std::shared_ptr<GptEncoding> encoding_;
+#endif
+    
     // Static mapping of encoding names to enum values
     static const std::unordered_map<std::string, TokenizerEncoding> encodingMap_;
     
-    // Initialize the tiktoken Encoding based on the encoding type
+    // Initialize the tokenizer based on the encoding type
     void initializeEncoding();
 }; 

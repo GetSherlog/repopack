@@ -1,6 +1,10 @@
 #include "tokenizer.hpp"
-#include <tiktoken_cpp.hpp>
 #include <stdexcept>
+
+// In cpp-tiktoken, the header is in a subdirectory
+#ifdef USE_TIKTOKEN
+#include <tiktoken/encoding.h>
+#endif
 
 // Static initialization of encoding map
 const std::unordered_map<std::string, TokenizerEncoding> Tokenizer::encodingMap_ = {
@@ -24,42 +28,75 @@ Tokenizer::Tokenizer(TokenizerEncoding encoding)
 Tokenizer::~Tokenizer() = default;
 
 void Tokenizer::initializeEncoding() {
+#ifdef USE_TIKTOKEN
+    // Convert our enum to the LanguageModel enum used by cpp-tiktoken
+    LanguageModel model;
+    
     switch (encodingType_) {
         case TokenizerEncoding::CL100K_BASE:
-            encoding_ = std::make_unique<tiktoken_cpp::Encoding>(tiktoken_cpp::cl100k_base());
             encodingName_ = "cl100k_base";
+            model = LanguageModel::CL100K_BASE;
             break;
         case TokenizerEncoding::P50K_BASE:
-            encoding_ = std::make_unique<tiktoken_cpp::Encoding>(tiktoken_cpp::p50k_base());
             encodingName_ = "p50k_base";
+            model = LanguageModel::P50K_BASE;
             break;
         case TokenizerEncoding::P50K_EDIT:
-            encoding_ = std::make_unique<tiktoken_cpp::Encoding>(tiktoken_cpp::p50k_edit());
             encodingName_ = "p50k_edit";
+            model = LanguageModel::P50K_EDIT;
             break;
         case TokenizerEncoding::R50K_BASE:
-            encoding_ = std::make_unique<tiktoken_cpp::Encoding>(tiktoken_cpp::r50k_base());
             encodingName_ = "r50k_base";
+            model = LanguageModel::R50K_BASE;
             break;
         case TokenizerEncoding::O200K_BASE:
-            encoding_ = std::make_unique<tiktoken_cpp::Encoding>(tiktoken_cpp::o200k_base());
             encodingName_ = "o200k_base";
+            model = LanguageModel::O200K_BASE;
             break;
         default:
             throw std::runtime_error("Unsupported tokenizer encoding");
     }
+    
+    // Get the encoder from cpp-tiktoken
+    encoding_ = GptEncoding::get_encoding(model);
+    
+    if (!encoding_) {
+        throw std::runtime_error("Failed to initialize tokenizer with encoding " + encodingName_);
+    }
+#else
+    encodingName_ = encodingToString(encodingType_);
+#endif
 }
 
 size_t Tokenizer::countTokens(const std::string& text) const {
+#ifdef USE_TIKTOKEN
     if (!encoding_) {
         throw std::runtime_error("Tokenizer not initialized");
     }
     
-    // Encode the text into tokens using tiktoken
+    // Encode the text into tokens using cpp-tiktoken
     auto tokens = encoding_->encode(text);
     
     // Return the number of tokens
     return tokens.size();
+#else
+    // Fallback implementation if tiktoken is not available
+    // A simple approximation: count words (plus some overhead for special tokens)
+    size_t wordCount = 0;
+    bool inWord = false;
+    
+    for (char c : text) {
+        if (std::isspace(c)) {
+            inWord = false;
+        } else if (!inWord) {
+            inWord = true;
+            wordCount++;
+        }
+    }
+    
+    // Rough approximation: words are typically 1.3 tokens
+    return static_cast<size_t>(wordCount * 1.3);
+#endif
 }
 
 std::string Tokenizer::getEncodingName() const {

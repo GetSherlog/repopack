@@ -11,6 +11,7 @@
 #include <cmath>
 #include <nlohmann/json.hpp>
 #include <tree_sitter/api.h>
+#include <set>
 
 // Include language headers for TreeSitter
 extern "C" {

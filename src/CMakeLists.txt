@@ -74,8 +74,22 @@ target_link_libraries(repomix PRIVATE
 
 # Link tiktoken if enabled
 if(USE_TIKTOKEN)
-    add_dependencies(repomix tiktoken_build)
-    target_link_libraries(repomix PRIVATE ${TIKTOKEN_LIB})
+    if(TARGET tiktoken::tiktoken)
+        target_link_libraries(repomix PRIVATE tiktoken::tiktoken)
+    else()
+        message(WARNING "tiktoken target not found, linking directly with ${CPP_TIKTOKEN_LIBRARY}")
+        target_link_libraries(repomix PRIVATE ${CPP_TIKTOKEN_LIBRARY})
+        # Link against dependencies
+        if(TARGET fmt::fmt)
+            target_link_libraries(repomix PRIVATE fmt::fmt)
+        elseif(FMT_LIBRARY)
+            target_link_libraries(repomix PRIVATE ${FMT_LIBRARY})
+        endif()
+        
+        if(PCRE2_LIBRARY)
+            target_link_libraries(repomix PRIVATE ${PCRE2_LIBRARY})
+        endif()
+    endif()
 endif()
 
 # Link ONNX Runtime if found

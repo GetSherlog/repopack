@@ -21,14 +21,12 @@ RUN apt-get update && apt-get install -y \
     libmysqlclient-dev \
     libsqlite3-dev \
     libhiredis-dev \
+    libfmt-dev \
+    libpcre2-dev \
+    libicu-dev \
     wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Rust and Cargo (required for tiktoken-rs)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup default stable
 
 # Build and install Drogon
 RUN git clone --recursive --depth=1 --branch v1.9.10 https://github.com/drogonframework/drogon.git /tmp/drogon && \
@@ -42,6 +40,70 @@ RUN git clone --recursive --depth=1 --branch v1.9.10 https://github.com/drogonfr
     cd / && \
     rm -rf /tmp/drogon
 
+# Install fmt library if not already installed by package
+RUN if [ ! -f "/usr/include/fmt/core.h" ]; then \
+    git clone https://github.com/fmtlib/fmt.git /tmp/fmt && \
+    cd /tmp/fmt && \
+    mkdir build && \
+    cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DFMT_TEST=OFF && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    cd / && \
+    rm -rf /tmp/fmt; \
+fi
+
+# Clone and build cpp-tiktoken
+RUN git clone --recursive https://github.com/gh-markt/cpp-tiktoken.git /usr/local/src/cpp-tiktoken && \
+    cd /usr/local/src/cpp-tiktoken && \
+    # Make sure the PCRE2 submodule is properly initialized
+    git submodule update --init --recursive && \
+    mkdir -p build && \
+    cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DPCRE2_INCLUDE_DIR=/usr/include -DPCRE2_LIBRARY=/usr/lib/$(uname -m)-linux-gnu/libpcre2-8.so && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig
+
+# Download and install ONNX Runtime with architecture detection
+RUN mkdir -p /usr/local/onnxruntime && \
+    cd /usr/local/onnxruntime && \
+    ARCH=$(uname -m) && \
+    ONNXRUNTIME_VERSION="1.15.1" && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        ONNX_RUNTIME_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz"; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        ONNX_RUNTIME_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-aarch64-${ONNXRUNTIME_VERSION}.tgz"; \
+    else \
+        echo "Architecture not supported for ONNX Runtime" && exit 1; \
+    fi && \
+    echo "Downloading ONNX Runtime from $ONNX_RUNTIME_URL" && \
+    curl -L ${ONNX_RUNTIME_URL} -o onnxruntime.tgz && \
+    tar -xzf onnxruntime.tgz --strip-components=1 && \
+    rm onnxruntime.tgz && \
+    # Create symlinks for libraries to be found during build
+    ln -s /usr/local/onnxruntime/lib/libonnxruntime.so /usr/local/lib/libonnxruntime.so && \
+    ln -s /usr/local/onnxruntime/lib/libonnxruntime.so.1.15.1 /usr/local/lib/libonnxruntime.so.1.15.1 && \
+    # Add include path to standard includes
+    cp -r /usr/local/onnxruntime/include/* /usr/local/include/ && \
+    ldconfig
+
+# Create model directory with placeholder files if needed
+RUN mkdir -p /app/models && \
+    cd /app/models && \
+    # Try to download the models but continue even if it fails
+    if ! wget -q --timeout=30 --tries=3 https://huggingface.co/microsoft/codebert-base/resolve/main/onnx/model.onnx -O codebert-ner.onnx; then \
+        # Create empty model file as a placeholder if download fails
+        echo "Failed to download model, creating placeholder" && \
+        touch codebert-ner.onnx; \
+    fi && \
+    if ! wget -q --timeout=30 --tries=3 https://huggingface.co/microsoft/codebert-base/resolve/main/vocab.json -O vocab.txt; then \
+        # Create basic vocab file as a placeholder if download fails
+        echo "Failed to download vocab, creating placeholder" && \
+        echo '{"placeholder": 0}' > vocab.txt; \
+    fi
+
 # Set up work directory
 WORKDIR /app
 
@@ -52,7 +114,7 @@ COPY . .
 RUN rm -rf build && \
     mkdir -p build && \
     cd build && \
-    cmake .. -DUSE_TIKTOKEN=ON && \
+    cmake .. -DONNX_RUNTIME_LIB=/usr/local/lib/libonnxruntime.so -DONNX_RUNTIME_INCLUDE_DIR=/usr/local/include && \
     cmake --build . --target repomix -j $(nproc) && \
     cmake --build . --target repomix_server -j $(nproc)
 

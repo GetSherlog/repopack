@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(repomix VERSION 0.1.0 LANGUAGES CXX)
+project(repomix VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,13 @@ endif()
 # Add include directories
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
+# Find system libraries
+find_package(Threads REQUIRED)
+find_package(Drogon REQUIRED)
+find_package(jsoncpp REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(CURL REQUIRED)
+
 # Dependencies
 include(FetchContent)
 
@@ -41,12 +48,70 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json)
 
-# TreeSitter for code parsing
+# TreeSitter for code parsing - disable unicode support since we don't have ICU
+# First check if ICU is available
+find_package(ICU COMPONENTS uc data QUIET)
+
+# Set options for tree-sitter build
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build tree-sitter as a static library")
+
+# Set compile definition globally for tree-sitter
+add_compile_definitions(TREE_SITTER_UTF8=0)
+
 FetchContent_Declare(
     tree-sitter
     GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
     GIT_TAG v0.20.8
 )
+
+# Apply patch to tree-sitter to make it work without ICU
+FetchContent_GetProperties(tree-sitter)
+if(NOT tree-sitter_POPULATED)
+    FetchContent_Populate(tree-sitter)
+    
+    # Patch the tree-sitter source to disable unicode support if ICU is not found
+    if(NOT ICU_FOUND)
+        file(WRITE ${tree-sitter_SOURCE_DIR}/lib/src/unicode/utf8.h 
+"#ifndef TREE_SITTER_UTF8_H_
+#define TREE_SITTER_UTF8_H_
+
+/* Simple UTF8 implementation that doesn't require ICU */
+#define utf8proc_uint8_t unsigned char
+#define utf8proc_int32_t int
+#define utf8proc_ssize_t long
+
+static inline utf8proc_ssize_t utf8proc_iterate(
+  const utf8proc_uint8_t *str, utf8proc_ssize_t strlen, utf8proc_int32_t *codepoint_ref
+) {
+  if (strlen <= 0) return 0;
+  
+  *codepoint_ref = str[0];
+  
+  if (str[0] < 128) {
+    return 1;
+  } else if ((str[0] & 0xE0) == 0xC0) {
+    if (strlen < 2) return -1;
+    *codepoint_ref = ((str[0] & 0x1F) << 6) | (str[1] & 0x3F);
+    return 2;
+  } else if ((str[0] & 0xF0) == 0xE0) {
+    if (strlen < 3) return -1;
+    *codepoint_ref = ((str[0] & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
+    return 3;
+  } else if ((str[0] & 0xF8) == 0xF0) {
+    if (strlen < 4) return -1;
+    *codepoint_ref = ((str[0] & 0x07) << 18) | ((str[1] & 0x3F) << 12) | ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
+    return 4;
+  } else {
+    return -1;
+  }
+}
+
+#endif // TREE_SITTER_UTF8_H_
+")
+    endif()
+endif()
+
+# Make tree-sitter available
 FetchContent_MakeAvailable(tree-sitter)
 
 # TreeSitter language parsers
@@ -74,7 +139,7 @@ FetchContent_MakeAvailable(tree-sitter-python)
 FetchContent_Declare(
     tree-sitter-javascript
     GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-javascript.git
-    GIT_TAG v0.20.0
+    GIT_TAG v0.20.4
 )
 FetchContent_MakeAvailable(tree-sitter-javascript)
 
@@ -82,14 +147,27 @@ FetchContent_MakeAvailable(tree-sitter-javascript)
 add_library(tree-sitter STATIC
     ${tree-sitter_SOURCE_DIR}/lib/src/lib.c
 )
+set_target_properties(tree-sitter PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(tree-sitter PUBLIC
     ${tree-sitter_SOURCE_DIR}/lib/include
 )
+target_compile_definitions(tree-sitter PRIVATE TREE_SITTER_UTF8=0)
+
+# Link with ICU if it's available
+if(ICU_FOUND)
+    target_link_libraries(tree-sitter PRIVATE ICU::uc ICU::data)
+    target_include_directories(tree-sitter PRIVATE ${ICU_INCLUDE_DIRS})
+else()
+    message(STATUS "ICU library not found, using Unicode compatibility mode")
+    # Ensure we're not trying to use ICU
+    target_compile_definitions(tree-sitter PRIVATE TREE_SITTER_UTF8=0)
+endif()
 
 # Build TreeSitter language parsers
 add_library(tree-sitter-cpp STATIC
     ${tree-sitter-cpp_SOURCE_DIR}/src/parser.c
 )
+set_target_properties(tree-sitter-cpp PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(tree-sitter-cpp PUBLIC
     ${tree-sitter-cpp_SOURCE_DIR}/src
     ${tree-sitter_SOURCE_DIR}/lib/include
@@ -98,6 +176,7 @@ target_include_directories(tree-sitter-cpp PUBLIC
 add_library(tree-sitter-c STATIC
     ${tree-sitter-c_SOURCE_DIR}/src/parser.c
 )
+set_target_properties(tree-sitter-c PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(tree-sitter-c PUBLIC
     ${tree-sitter-c_SOURCE_DIR}/src
     ${tree-sitter_SOURCE_DIR}/lib/include
@@ -106,6 +185,7 @@ target_include_directories(tree-sitter-c PUBLIC
 add_library(tree-sitter-python STATIC
     ${tree-sitter-python_SOURCE_DIR}/src/parser.c
 )
+set_target_properties(tree-sitter-python PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(tree-sitter-python PUBLIC
     ${tree-sitter-python_SOURCE_DIR}/src
     ${tree-sitter_SOURCE_DIR}/lib/include
@@ -114,68 +194,85 @@ target_include_directories(tree-sitter-python PUBLIC
 add_library(tree-sitter-javascript STATIC
     ${tree-sitter-javascript_SOURCE_DIR}/src/parser.c
 )
+set_target_properties(tree-sitter-javascript PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(tree-sitter-javascript PUBLIC
     ${tree-sitter-javascript_SOURCE_DIR}/src
     ${tree-sitter_SOURCE_DIR}/lib/include
 )
 
-# tiktoken-rs for tokenization
+# tiktoken for tokenization
 option(USE_TIKTOKEN "Enable tiktoken for token counting" ON)
-if(USE_TIKTOKEN)
-    # Check for Rust and Cargo
-    find_program(CARGO_EXECUTABLE cargo)
-    if(NOT CARGO_EXECUTABLE)
-        message(FATAL_ERROR "Cargo not found. Please install Rust and Cargo to build tiktoken-rs.")
-    endif()
-    
-    # Set up directory for tiktoken-cpp binding
-    set(TIKTOKEN_DIR ${CMAKE_BINARY_DIR}/tiktoken)
-    file(MAKE_DIRECTORY ${TIKTOKEN_DIR})
-    
-    # Clone tiktoken-rs
-    execute_process(
-        COMMAND git clone https://github.com/openai/tiktoken-rs.git ${TIKTOKEN_DIR}
-        RESULT_VARIABLE TIKTOKEN_CLONE_RESULT
-        OUTPUT_QUIET ERROR_QUIET
-    )
-    
-    if(NOT TIKTOKEN_CLONE_RESULT EQUAL 0)
-        message(STATUS "Failed to clone tiktoken-rs, attempting to use existing directory")
-    endif()
-    
-    # Build tiktoken C++ wrapper
-    add_custom_target(tiktoken_build ALL
-        COMMAND ${CARGO_EXECUTABLE} build --release
-        WORKING_DIRECTORY ${TIKTOKEN_DIR}
-        COMMENT "Building tiktoken-rs"
-    )
-    
-    # Create C++ binding headers
-    set(TIKTOKEN_INCLUDE_DIR ${CMAKE_BINARY_DIR}/include)
-    file(MAKE_DIRECTORY ${TIKTOKEN_INCLUDE_DIR})
-    configure_file(
-        ${PROJECT_SOURCE_DIR}/src/tiktoken_cpp.hpp.in
-        ${TIKTOKEN_INCLUDE_DIR}/tiktoken_cpp.hpp
-        @ONLY
-    )
-    
-    # Set up tiktoken lib and include paths
-    set(TIKTOKEN_LIB_DIR ${TIKTOKEN_DIR}/target/release)
-    if(WIN32)
-        set(TIKTOKEN_LIB ${TIKTOKEN_LIB_DIR}/tiktoken.lib)
-    else()
-        set(TIKTOKEN_LIB ${TIKTOKEN_LIB_DIR}/libtiktoken.a)
-    endif()
-    
-    include_directories(${TIKTOKEN_INCLUDE_DIR})
-    add_compile_definitions(USE_TIKTOKEN)
-endif()
 
-# Find system libraries
-find_package(Drogon REQUIRED)
-find_package(jsoncpp REQUIRED)
-find_package(OpenSSL REQUIRED)
-find_package(CURL REQUIRED)
+if(USE_TIKTOKEN)
+    # Find fmt library (dependency of cpp-tiktoken)
+    find_package(fmt QUIET)
+    if(NOT fmt_FOUND)
+        message(STATUS "Looking for fmt library in system paths...")
+        find_library(FMT_LIBRARY NAMES fmt)
+        find_path(FMT_INCLUDE_DIR NAMES fmt/core.h)
+        
+        if(FMT_LIBRARY AND FMT_INCLUDE_DIR)
+            message(STATUS "Found fmt: ${FMT_LIBRARY}")
+            include_directories(${FMT_INCLUDE_DIR})
+        else()
+            message(WARNING "fmt library not found, tiktoken may not build correctly")
+        endif()
+    endif()
+    
+    # Find PCRE2 library (dependency of cpp-tiktoken)
+    find_path(PCRE2_INCLUDE_DIR pcre2.h
+        PATHS /usr/include /usr/local/include
+        DOC "The directory where pcre2.h resides")
+    
+    find_library(PCRE2_LIBRARY
+        NAMES pcre2-8
+        PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu
+        DOC "The PCRE2 library")
+    
+    if(PCRE2_INCLUDE_DIR AND PCRE2_LIBRARY)
+        message(STATUS "Found PCRE2: ${PCRE2_LIBRARY}")
+        include_directories(${PCRE2_INCLUDE_DIR})
+    else()
+        message(WARNING "PCRE2 library not found, tiktoken may not build correctly")
+    endif()
+
+    # Look for cpp-tiktoken library
+    find_path(CPP_TIKTOKEN_INCLUDE_DIR tiktoken/encoding.h
+        PATHS /usr/local/include
+        DOC "The directory where tiktoken/encoding.h resides")
+    
+    find_library(CPP_TIKTOKEN_LIBRARY
+        NAMES tiktoken cpp-tiktoken
+        PATHS /usr/local/lib
+        DOC "The cpp-tiktoken library")
+    
+    if(CPP_TIKTOKEN_INCLUDE_DIR AND CPP_TIKTOKEN_LIBRARY)
+        message(STATUS "Found cpp-tiktoken: ${CPP_TIKTOKEN_LIBRARY}")
+        include_directories(${CPP_TIKTOKEN_INCLUDE_DIR})
+        # Set the library as a CMake target so it can be linked against
+        if(NOT TARGET tiktoken::tiktoken)
+            add_library(tiktoken::tiktoken UNKNOWN IMPORTED)
+            set_target_properties(tiktoken::tiktoken PROPERTIES
+                IMPORTED_LOCATION "${CPP_TIKTOKEN_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${CPP_TIKTOKEN_INCLUDE_DIR}")
+            
+            # Link dependencies to the tiktoken target
+            if(TARGET fmt::fmt)
+                set_property(TARGET tiktoken::tiktoken PROPERTY
+                    INTERFACE_LINK_LIBRARIES fmt::fmt)
+            endif()
+            
+            if(PCRE2_LIBRARY)
+                set_property(TARGET tiktoken::tiktoken APPEND PROPERTY
+                    INTERFACE_LINK_LIBRARIES "${PCRE2_LIBRARY}")
+            endif()
+        endif()
+        add_compile_definitions(USE_TIKTOKEN)
+    else()
+        message(WARNING "cpp-tiktoken not found. Token counting may not work correctly.")
+        set(USE_TIKTOKEN OFF)
+    endif()
+endif()
 
 # Add subdirectories for source code
 add_subdirectory(src)
@@ -184,57 +281,77 @@ add_subdirectory(src)
 add_subdirectory(test)
 
 # Find dependencies
-find_package(Threads REQUIRED)
 find_package(nlohmann_json QUIET)
 find_package(CLI11 QUIET)
 
 # ONNX Runtime for ML-based NER
 option(USE_ONNX_RUNTIME "Enable ONNX Runtime for ML-based NER" ON)
 if(USE_ONNX_RUNTIME)
-    # Try to find ONNX Runtime
-    find_package(ONNXRuntime QUIET)
+    # Try to find ONNX Runtime with hints from the environment
+    find_library(ONNX_RUNTIME_LIB
+        NAMES onnxruntime
+        PATHS ${ONNX_RUNTIME_LIB} /usr/local/lib /usr/lib
+        DOC "Path to the ONNX Runtime library"
+    )
     
-    if(NOT ONNXRuntime_FOUND)
-        message(STATUS "ONNX Runtime not found, downloading...")
-        set(ONNXRUNTIME_VERSION "1.15.1")
-        
-        if(WIN32)
-            set(ONNX_RUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip")
-            set(ONNX_RUNTIME_HASH "SHA256=1e17c1c8e54b19c583edcc3ffad7e9d581f3b4bcd886904940a1b0e3b58ab10e")
-        elseif(APPLE)
-            set(ONNX_RUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-x86_64-${ONNXRUNTIME_VERSION}.tgz")
-            set(ONNX_RUNTIME_HASH "SHA256=efa4db0ef7c4e52d8e7a2bd91374f0039c84a48a9bbc8dec25ca72d6420c5bf7")
-        else()
-            set(ONNX_RUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz")
-            set(ONNX_RUNTIME_HASH "SHA256=5fc6942e4e4b898c7fb6e4a4f8ebf2cf770310a9fa6de3b1e2b57fdf12862240")
+    find_path(ONNX_RUNTIME_INCLUDE_DIR
+        NAMES onnxruntime_cxx_api.h
+        PATHS ${ONNX_RUNTIME_INCLUDE_DIR} /usr/local/include /usr/include
+        DOC "Path to the ONNX Runtime include directory"
+    )
+    
+    if(ONNX_RUNTIME_LIB AND ONNX_RUNTIME_INCLUDE_DIR)
+        message(STATUS "Found ONNX Runtime: ${ONNX_RUNTIME_LIB}")
+        include_directories(${ONNX_RUNTIME_INCLUDE_DIR})
+        # Create an imported target for ONNX Runtime
+        if(NOT TARGET ONNXRuntime::ONNXRuntime)
+            add_library(ONNXRuntime::ONNXRuntime UNKNOWN IMPORTED)
+            set_target_properties(ONNXRuntime::ONNXRuntime PROPERTIES
+                IMPORTED_LOCATION "${ONNX_RUNTIME_LIB}"
+                INTERFACE_INCLUDE_DIRECTORIES "${ONNX_RUNTIME_INCLUDE_DIR}"
+            )
         endif()
-        
-        FetchContent_Declare(
-            onnxruntime
-            URL ${ONNX_RUNTIME_URL}
-            URL_HASH ${ONNX_RUNTIME_HASH}
-        )
-        FetchContent_MakeAvailable(onnxruntime)
-        
-        # Set up include directories and libraries
-        set(ONNX_RUNTIME_INCLUDE_DIRS "${onnxruntime_SOURCE_DIR}/include")
-        if(WIN32)
-            set(ONNX_RUNTIME_LIBRARIES "${onnxruntime_SOURCE_DIR}/lib/onnxruntime.lib")
-        else()
-            set(ONNX_RUNTIME_LIBRARIES "${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so")
-            if(APPLE)
-                set(ONNX_RUNTIME_LIBRARIES "${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.dylib")
-            endif()
-        endif()
-        
         add_compile_definitions(USE_ONNX_RUNTIME)
+    else()
+        message(WARNING "ONNX Runtime not found. ML-based NER will be disabled.")
+        set(USE_ONNX_RUNTIME OFF)
     endif()
 endif()
 
-# Also download the CodeBERT model
-add_custom_target(download_models ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/models
-    COMMAND curl -o ${CMAKE_BINARY_DIR}/models/codebert-ner.onnx -L https://github.com/microsoft/CodeBERT/raw/master/models/codebert-ner.onnx
-    COMMAND curl -o ${CMAKE_BINARY_DIR}/models/vocab.txt -L https://github.com/microsoft/CodeBERT/raw/master/roberta-base/vocab.txt
-    COMMENT "Downloading CodeBERT NER model and vocabulary"
-)
+# Models are pre-downloaded in the Dockerfile to /app/models
+if(USE_ONNX_RUNTIME)
+    # Add compile definition to provide path to models
+    add_compile_definitions(ONNX_MODEL_PATH="${CMAKE_SOURCE_DIR}/models")
+    
+    # Check if models directory exists and create it if it doesn't
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/models")
+        file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/models")
+    endif()
+    
+    # Check if model files exist and create placeholders if they don't
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/models/codebert-ner.onnx")
+        message(STATUS "Model file not found, creating placeholder")
+        file(TOUCH "${CMAKE_SOURCE_DIR}/models/codebert-ner.onnx")
+    endif()
+    
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/models/vocab.txt")
+        message(STATUS "Vocab file not found, creating placeholder")
+        file(WRITE "${CMAKE_SOURCE_DIR}/models/vocab.txt" "{\"placeholder\": 0}")
+    endif()
+    
+    # Create a symbolic link to the models directory if it doesn't exist
+    if(NOT EXISTS "${CMAKE_BINARY_DIR}/models")
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E create_symlink "${CMAKE_SOURCE_DIR}/models" "${CMAKE_BINARY_DIR}/models"
+            RESULT_VARIABLE LINK_RESULT
+        )
+        
+        if(NOT LINK_RESULT EQUAL 0)
+            # If symlink fails, just copy the directory
+            message(STATUS "Creating symlink failed, copying model files instead")
+            file(COPY "${CMAKE_SOURCE_DIR}/models" DESTINATION "${CMAKE_BINARY_DIR}")
+        endif()
+    endif()
+else()
+    message(STATUS "ONNX Runtime is disabled, skipping model setup")
+endif()
