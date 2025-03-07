@@ -1,1 +1,73 @@
- 
+# C++ specific
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.elf
+
+# CMake build directory
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# IDE/Editor specific
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+*.sublime-workspace
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Dependency directories
+vcpkg_installed/
+vcpkg/
+packages/
+vendor/
+
+# Generated files
+generated/
+gen/
+bin/
+lib/
+dist/
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+.cache/
+tmp/
+
+# Testing
+Testing/
+test/tmp/
+
+# Python (if using any Python scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Node modules (for the frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
