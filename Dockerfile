@@ -25,14 +25,19 @@ RUN apt-get update && apt-get install -y \
     libpcre2-dev \
     libicu-dev \
     wget \
-    clang \
-    clang++ \
     python3 \
     nodejs \
     npm \
     libtree-sitter-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Determine Tree-sitter include and library paths
+RUN mkdir -p /tmp/tree-sitter-config && \
+    echo "Locating Tree-sitter files:" && \
+    find /usr -name "tree_sitter" -type d | tee /tmp/tree-sitter-config/include_paths.txt && \
+    find /usr -name "api.h" | grep tree_sitter | tee /tmp/tree-sitter-config/api_paths.txt && \
+    find /usr -name "libtree-sitter.so*" | tee /tmp/tree-sitter-config/lib_paths.txt
 
 # Build and install Drogon
 RUN git clone --recursive --depth=1 --branch v1.9.10 https://github.com/drogonframework/drogon.git /tmp/drogon && \
@@ -120,13 +125,18 @@ COPY . .
 RUN rm -rf build && \
     mkdir -p build && \
     cd build && \
+    # Set Tree-sitter variables based on find results
+    TS_LIB=$(cat /tmp/tree-sitter-config/lib_paths.txt | head -n 1) && \
+    TS_INCLUDE_DIR=$(dirname $(cat /tmp/tree-sitter-config/api_paths.txt | head -n 1)) && \
+    echo "Using Tree-sitter lib: ${TS_LIB}" && \
+    echo "Using Tree-sitter include: ${TS_INCLUDE_DIR}" && \
     cmake .. \
       -DONNX_RUNTIME_LIB=/usr/local/lib/libonnxruntime.so \
       -DONNX_RUNTIME_INCLUDE_DIR=/usr/local/include \
-      -DTREE_SITTER_LIB=/usr/lib/x86_64-linux-gnu/libtree-sitter.so \
-      -DTREE_SITTER_INCLUDE_DIR=/usr/include/tree-sitter \
-      -DTREE_SITTER_CPP_LIB="" \
-      -DTREE_SITTER_CPP_INCLUDE_DIR="" && \
+      -DTREE_SITTER_LIB="${TS_LIB}" \
+      -DTREE_SITTER_INCLUDE_DIR="${TS_INCLUDE_DIR}" \
+      -DUSE_SYSTEM_TREE_SITTER=ON \
+      -DCMAKE_BUILD_TYPE=Release && \
     cmake --build . --target repomix -j $(nproc) && \
     cmake --build . --target repomix_server -j $(nproc)
 

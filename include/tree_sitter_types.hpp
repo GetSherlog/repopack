@@ -7,16 +7,22 @@
 extern "C" {
 #endif
 
+// We need to ensure we use the same definition for TSNode as tree-sitter
+// This matches the definition in tree_sitter/api.h
+typedef struct {
+    const void* tree;
+    const void* id;
+    uint32_t context[4];
+} TSNode;
+
 // Forward declare tree-sitter types used in our codebase
 typedef struct TSLanguage TSLanguage;
 typedef struct TSParser TSParser;
 typedef struct TSTree TSTree;
 typedef struct TSQuery TSQuery;
 typedef struct TSQueryCursor TSQueryCursor;
-typedef struct TSQueryMatch TSQueryMatch;
-typedef struct TSQueryCapture TSQueryCapture;
 
-// Complete structure definitions needed for allocation
+// Structure definitions needed for allocation
 typedef struct {
     TSNode node;
     uint32_t index;
@@ -39,14 +45,6 @@ typedef enum {
     TSQueryErrorStructure,
     TSQueryErrorLanguage,
 } TSQueryError;
-
-// We need to ensure we use the same definition for TSNode as tree-sitter
-// This matches the definition in tree_sitter/api.h
-typedef struct {
-    const void* tree;
-    const void* id;
-    uint32_t context[4];
-} TSNode;
 
 // Forward declare tree-sitter language functions
 TSLanguage* tree_sitter_cpp();

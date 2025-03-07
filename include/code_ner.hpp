@@ -14,13 +14,18 @@
 #include "repomix.hpp"  // For SummarizationOptions
 #include "tree_sitter_types.hpp"  // For TreeSitter types
 
-// Forward declaration for ONNX Runtime headers
+// For ONNX Runtime
+#ifdef USE_ONNX_RUNTIME
+#include <onnxruntime_cxx_api.h>
+#else
+// Forward declaration for ONNX Runtime headers when not using the actual headers
 namespace Ort {
     class Session;
     class Env;
     class MemoryInfo;
     struct Value;
 }
+#endif
 
 namespace fs = std::filesystem;
 
@@ -117,53 +122,28 @@ private:
     };
     
     // ONNX Runtime implementation details
-    struct MLImpl {
-        // ONNX Runtime session and environment
-        std::unique_ptr<Ort::Env> env;
-        std::unique_ptr<Ort::Session> session;
-        std::unique_ptr<Ort::MemoryInfo> memoryInfo;
-        bool modelLoaded = false;
-        TokenizerConfig tokenizerConfig;
-        
-        // Entity label map
-        std::unordered_map<int, std::string> labelMap = {
-            {0, "O"},        // Outside any entity
-            {1, "B-CLASS"},  // Beginning of class
-            {2, "I-CLASS"},  // Inside class
-            {3, "B-FUNC"},   // Beginning of function
-            {4, "I-FUNC"},   // Inside function
-            {5, "B-VAR"},    // Beginning of variable
-            {6, "I-VAR"},    // Inside variable
-            {7, "B-ENUM"},   // Beginning of enum
-            {8, "I-ENUM"},   // Inside enum
-            {9, "B-IMP"},    // Beginning of import
-            {10, "I-IMP"}    // Inside import
-        };
-    };
-    
+    struct MLImpl;
     std::unique_ptr<MLImpl> impl_;
     
-    // ML model cache to avoid reloading
+    // Static cache for entity extraction results
     static std::unordered_map<std::string, std::vector<NamedEntity>> entityCache_;
     static std::mutex cacheMutex_;
     
-    // Helper methods for CodeBERT
+    // Helper methods for ML-based NER
     bool initializeModel() const;
     bool loadVocabulary(const std::string& vocabPath) const;
     std::vector<int32_t> tokenize(const std::string& text) const;
     std::vector<NamedEntity> runInference(const std::string& content, const fs::path& filePath) const;
     std::vector<std::pair<std::string, EntityType>> extractEntitiesFromLabels(
         const std::vector<std::string>& tokens,
-        const std::vector<int>& labels) const;
-    
-    // Convert ML output to NamedEntity objects
+        const std::vector<std::string>& labels
+    ) const;
     EntityType mapEntityTypeFromModel(const std::string& mlEntityType) const;
     
-    // Load the ONNX model file
     std::string getModelPath() const;
 };
 
-// Hybrid NER that chooses the best approach based on file characteristics
+// Hybrid NER combining multiple approaches
 class HybridNER : public CodeNER {
 public:
     explicit HybridNER(const SummarizationOptions& options);

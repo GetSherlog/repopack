@@ -28,6 +28,33 @@ extern "C" {
 std::unordered_map<std::string, std::vector<CodeNER::NamedEntity>> MLNER::entityCache_;
 std::mutex MLNER::cacheMutex_;
 
+// MLNER::MLImpl structure definition
+struct MLNER::MLImpl {
+#ifdef USE_ONNX_RUNTIME
+    // ONNX Runtime session and environment
+    std::unique_ptr<Ort::Env> env;
+    std::unique_ptr<Ort::Session> session;
+    std::unique_ptr<Ort::MemoryInfo> memoryInfo;
+#endif
+    bool modelLoaded = false;
+    TokenizerConfig tokenizerConfig;
+    
+    // Entity label map
+    std::unordered_map<int, std::string> labelMap = {
+        {0, "O"},        // Outside any entity
+        {1, "B-CLASS"},  // Beginning of class
+        {2, "I-CLASS"},  // Inside class
+        {3, "B-FUNC"},   // Beginning of function
+        {4, "I-FUNC"},   // Inside function
+        {5, "B-VAR"},    // Beginning of variable
+        {6, "I-VAR"},    // Inside variable
+        {7, "B-ENUM"},   // Beginning of enum
+        {8, "I-ENUM"},   // Inside enum
+        {9, "B-IMP"},    // Beginning of import
+        {10, "I-IMP"}    // Inside import
+    };
+};
+
 // Factory method implementation
 std::unique_ptr<CodeNER> CodeNER::create(const SummarizationOptions& options) {
     switch (options.nerMethod) {
@@ -772,49 +799,56 @@ std::vector<CodeNER::NamedEntity> MLNER::runInference(
 
 std::vector<std::pair<std::string, CodeNER::EntityType>> MLNER::extractEntitiesFromLabels(
     const std::vector<std::string>& tokens,
-    const std::vector<int>& labels
+    const std::vector<std::string>& labels
 ) const {
+    // Convert string labels to entity pairs
     std::vector<std::pair<std::string, EntityType>> entities;
+    std::string currentEntity;
+    EntityType currentType = EntityType::Other;
+    bool inEntity = false;
     
-#ifdef USE_ONNX_RUNTIME
-    // Ensure tokens and labels have the same size
-    size_t size = std::min(tokens.size(), labels.size());
-    
-    // Iterate through tokens and labels
-    for (size_t i = 0; i < size; i++) {
-        int label = labels[i];
-        std::string labelStr = impl_->labelMap.count(label) ? impl_->labelMap.at(label) : "O";
+    // Process the labels to extract entities
+    for (size_t i = 0; i < std::min(tokens.size(), labels.size()); ++i) {
+        // Skip special tokens
+        if (tokens[i] == "[CLS]" || tokens[i] == "[SEP]" || tokens[i] == "[PAD]") {
+            continue;
+        }
         
-        // Skip "O" (Outside) labels
-        if (labelStr == "O") continue;
+        // Get the current label
+        std::string label = labels[i];
         
-        // Check if this is the beginning of an entity
-        if (labelStr.substr(0, 2) == "B-") {
-            std::string entityType = labelStr.substr(2);
-            std::string entityName = tokens[i];
-            
-            // Look ahead for any "I-" (Inside) labels of the same type
-            size_t j = i + 1;
-            while (j < size && 
-                   labels[j] != 0 && // Not "O"
-                   impl_->labelMap.count(labels[j]) && 
-                   impl_->labelMap.at(labels[j]).substr(0, 2) == "I-" &&
-                   impl_->labelMap.at(labels[j]).substr(2) == entityType) {
-                entityName += " " + tokens[j];
-                j++;
+        // Check if we're starting a new entity
+        if (label.substr(0, 2) == "B-") {
+            // If we were in an entity, add it to the list
+            if (inEntity && !currentEntity.empty()) {
+                entities.push_back({currentEntity, currentType});
             }
             
-            // Map to our entity type
-            EntityType type = mapEntityTypeFromModel(entityType);
-            
-            // Add to entities
-            entities.push_back({entityName, type});
-            
-            // Skip the tokens we've already processed
-            i = j - 1;
+            // Start a new entity
+            currentEntity = tokens[i];
+            currentType = mapEntityTypeFromModel(label.substr(2));
+            inEntity = true;
+        }
+        // Check if we're continuing an entity
+        else if (label.substr(0, 2) == "I-" && inEntity) {
+            // Add to the current entity
+            currentEntity += " " + tokens[i];
+        }
+        // Check if we're outside any entity
+        else if (label == "O") {
+            // If we were in an entity, add it to the list
+            if (inEntity && !currentEntity.empty()) {
+                entities.push_back({currentEntity, currentType});
+                currentEntity.clear();
+                inEntity = false;
+            }
         }
     }
-#endif
+    
+    // Handle the last entity if there is one
+    if (inEntity && !currentEntity.empty()) {
+        entities.push_back({currentEntity, currentType});
+    }
     
     return entities;
 }

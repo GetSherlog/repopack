@@ -68,6 +68,7 @@ if(USE_SYSTEM_TREE_SITTER)
     
     if(TREE_SITTER_LIB AND TREE_SITTER_INCLUDE_DIR)
         message(STATUS "Found system Tree-sitter: ${TREE_SITTER_LIB}")
+        message(STATUS "Tree-sitter include directory: ${TREE_SITTER_INCLUDE_DIR}")
         include_directories(${TREE_SITTER_INCLUDE_DIR})
         # Create an imported target for Tree-sitter
         if(NOT TARGET tree-sitter)
