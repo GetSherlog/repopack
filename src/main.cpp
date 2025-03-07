@@ -111,10 +111,17 @@ int main(int argc, char** argv) {
                                "Path for scoring report file (default: scoring-report.json)");
                                
         // Only enable scoring options when scoring is selected
-        fileSelectionOpt->needs(scoringGroup);
+        bool useScoring = false;
+        CLI::Option* scoringOpt = app.add_flag("--scoring", useScoring, "Use scoring-based file selection strategy")
+            ->excludes(fileSelectionOpt);
         
         // Parse command line arguments
         CLI11_PARSE(app, argc, argv);
+        
+        // Apply scoring if option was selected
+        if (useScoring) {
+            options.selectionStrategy = RepomixOptions::FileSelectionStrategy::Scoring;
+        }
         
         // Set output format
         if (formatStr == "plain") {

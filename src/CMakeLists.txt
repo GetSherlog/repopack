@@ -12,20 +12,34 @@ target_link_libraries(repomix_lib PUBLIC
     ${CMAKE_THREAD_LIBS_INIT}
     nlohmann_json::nlohmann_json
     tree-sitter
-    tree-sitter-cpp
-    tree-sitter-c
-    tree-sitter-python
-    tree-sitter-javascript
 )
 
+# Add language parser libraries only if not using system tree-sitter
+if(NOT USE_SYSTEM_TREE_SITTER)
+    target_link_libraries(repomix_lib PUBLIC
+        tree-sitter-cpp
+        tree-sitter-c
+        tree-sitter-python
+        tree-sitter-javascript
+    )
+endif()
+
 # Add include directories for TreeSitter
-target_include_directories(repomix_lib PRIVATE
-    ${tree-sitter_SOURCE_DIR}/lib/include
-    ${tree-sitter-cpp_SOURCE_DIR}/src
-    ${tree-sitter-c_SOURCE_DIR}/src
-    ${tree-sitter-python_SOURCE_DIR}/src
-    ${tree-sitter-javascript_SOURCE_DIR}/src
-)
+if(USE_SYSTEM_TREE_SITTER)
+    # Use system include directories
+    target_include_directories(repomix_lib PRIVATE
+        ${TREE_SITTER_INCLUDE_DIR}
+    )
+else()
+    # Use source include directories
+    target_include_directories(repomix_lib PRIVATE
+        ${tree-sitter_SOURCE_DIR}/lib/include
+        ${tree-sitter-cpp_SOURCE_DIR}/src
+        ${tree-sitter-c_SOURCE_DIR}/src
+        ${tree-sitter-python_SOURCE_DIR}/src
+        ${tree-sitter-javascript_SOURCE_DIR}/src
+    )
+endif()
 
 # Add ONNX Runtime if enabled
 if(USE_ONNX_RUNTIME)
@@ -51,12 +65,24 @@ target_include_directories(repomix PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${CLI11_SOURCE_DIR}/include
     ${nlohmann_json_SOURCE_DIR}/include
-    ${tree-sitter_SOURCE_DIR}/lib/include
-    ${tree-sitter-cpp_SOURCE_DIR}/src
-    ${tree-sitter-c_SOURCE_DIR}/src
-    ${tree-sitter-python_SOURCE_DIR}/src
-    ${tree-sitter-javascript_SOURCE_DIR}/src
 )
+
+# Add Tree-sitter include directories
+if(USE_SYSTEM_TREE_SITTER)
+    # Use system include directories
+    target_include_directories(repomix PRIVATE
+        ${TREE_SITTER_INCLUDE_DIR}
+    )
+else()
+    # Use source include directories
+    target_include_directories(repomix PRIVATE
+        ${tree-sitter_SOURCE_DIR}/lib/include
+        ${tree-sitter-cpp_SOURCE_DIR}/src
+        ${tree-sitter-c_SOURCE_DIR}/src
+        ${tree-sitter-python_SOURCE_DIR}/src
+        ${tree-sitter-javascript_SOURCE_DIR}/src
+    )
+endif()
 
 target_link_libraries(repomix PRIVATE
     Threads::Threads
@@ -66,11 +92,17 @@ target_link_libraries(repomix PRIVATE
     OpenSSL::Crypto
     CURL::libcurl
     tree-sitter
-    tree-sitter-cpp
-    tree-sitter-c
-    tree-sitter-python
-    tree-sitter-javascript
 )
+
+# Add language parser libraries only if not using system tree-sitter
+if(NOT USE_SYSTEM_TREE_SITTER)
+    target_link_libraries(repomix PRIVATE
+        tree-sitter-cpp
+        tree-sitter-c
+        tree-sitter-python
+        tree-sitter-javascript
+    )
+endif()
 
 # Link tiktoken if enabled
 if(USE_TIKTOKEN)
@@ -117,22 +149,40 @@ target_link_libraries(repomix_server PRIVATE
     nlohmann_json::nlohmann_json
     CURL::libcurl
     tree-sitter
-    tree-sitter-cpp
-    tree-sitter-c
-    tree-sitter-python
-    tree-sitter-javascript
 )
+
+# Add language parser libraries only if not using system tree-sitter
+if(NOT USE_SYSTEM_TREE_SITTER)
+    target_link_libraries(repomix_server PRIVATE
+        tree-sitter-cpp
+        tree-sitter-c
+        tree-sitter-python
+        tree-sitter-javascript
+    )
+endif()
 
 # Target include directories for server
 target_include_directories(repomix_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include
-    ${tree-sitter_SOURCE_DIR}/lib/include
-    ${tree-sitter-cpp_SOURCE_DIR}/src
-    ${tree-sitter-c_SOURCE_DIR}/src
-    ${tree-sitter-python_SOURCE_DIR}/src
-    ${tree-sitter-javascript_SOURCE_DIR}/src
 )
+
+# Add Tree-sitter include directories
+if(USE_SYSTEM_TREE_SITTER)
+    # Use system include directories
+    target_include_directories(repomix_server PRIVATE
+        ${TREE_SITTER_INCLUDE_DIR}
+    )
+else()
+    # Use source include directories
+    target_include_directories(repomix_server PRIVATE
+        ${tree-sitter_SOURCE_DIR}/lib/include
+        ${tree-sitter-cpp_SOURCE_DIR}/src
+        ${tree-sitter-c_SOURCE_DIR}/src
+        ${tree-sitter-python_SOURCE_DIR}/src
+        ${tree-sitter-javascript_SOURCE_DIR}/src
+    )
+endif()
 
 # Installation
 install(TARGETS repomix

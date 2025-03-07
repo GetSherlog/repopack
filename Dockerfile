@@ -25,6 +25,12 @@ RUN apt-get update && apt-get install -y \
     libpcre2-dev \
     libicu-dev \
     wget \
+    clang \
+    clang++ \
+    python3 \
+    nodejs \
+    npm \
+    libtree-sitter-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -114,7 +120,13 @@ COPY . .
 RUN rm -rf build && \
     mkdir -p build && \
     cd build && \
-    cmake .. -DONNX_RUNTIME_LIB=/usr/local/lib/libonnxruntime.so -DONNX_RUNTIME_INCLUDE_DIR=/usr/local/include && \
+    cmake .. \
+      -DONNX_RUNTIME_LIB=/usr/local/lib/libonnxruntime.so \
+      -DONNX_RUNTIME_INCLUDE_DIR=/usr/local/include \
+      -DTREE_SITTER_LIB=/usr/lib/x86_64-linux-gnu/libtree-sitter.so \
+      -DTREE_SITTER_INCLUDE_DIR=/usr/include/tree-sitter \
+      -DTREE_SITTER_CPP_LIB="" \
+      -DTREE_SITTER_CPP_INCLUDE_DIR="" && \
     cmake --build . --target repomix -j $(nproc) && \
     cmake --build . --target repomix_server -j $(nproc)
 

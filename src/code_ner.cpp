@@ -13,14 +13,15 @@
 #endif
 
 // Include TreeSitter header
-#include <tree_sitter/api.h>
+#include "../include/tree_sitter_types.hpp"
 
 // Include language headers
 extern "C" {
-    TSLanguage* tree_sitter_cpp();
-    TSLanguage* tree_sitter_c();
-    TSLanguage* tree_sitter_python();
-    TSLanguage* tree_sitter_javascript();
+    // These are already declared in tree_sitter_types.hpp
+    // TSLanguage* tree_sitter_cpp();
+    // TSLanguage* tree_sitter_c();
+    // TSLanguage* tree_sitter_python();
+    // TSLanguage* tree_sitter_javascript();
 }
 
 // Static cache initialization for MLNER

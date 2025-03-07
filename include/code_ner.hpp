@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <regex>
 #include "repomix.hpp"  // For SummarizationOptions
+#include "tree_sitter_types.hpp"  // For TreeSitter types
 
 // Forward declaration for ONNX Runtime headers
 namespace Ort {
@@ -25,14 +26,6 @@ namespace fs = std::filesystem;
 
 // Forward declaration
 class FileProcessor;
-
-// Forward declarations for tree-sitter
-struct TSLanguage;
-struct TSParser;
-struct TSTree;
-struct TSNode;
-struct TSQuery;
-struct TSQueryCursor;
 
 // Base class for Named Entity Recognition in code
 class CodeNER {

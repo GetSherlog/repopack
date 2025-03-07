@@ -10,15 +10,16 @@
 #include <string>
 #include <cmath>
 #include <nlohmann/json.hpp>
-#include <tree_sitter/api.h>
+#include "tree_sitter_types.hpp"
 #include <set>
 
 // Include language headers for TreeSitter
 extern "C" {
-    TSLanguage* tree_sitter_cpp();
-    TSLanguage* tree_sitter_c();
-    TSLanguage* tree_sitter_python();
-    TSLanguage* tree_sitter_javascript();
+    // These are already declared in tree_sitter_types.hpp, so no need to redeclare
+    // TSLanguage* tree_sitter_cpp();
+    // TSLanguage* tree_sitter_c();
+    // TSLanguage* tree_sitter_python();
+    // TSLanguage* tree_sitter_javascript();
 }
 
 namespace fs = std::filesystem;

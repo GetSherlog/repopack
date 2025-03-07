@@ -48,157 +48,198 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json)
 
-# TreeSitter for code parsing - disable unicode support since we don't have ICU
-# First check if ICU is available
-find_package(ICU COMPONENTS uc data QUIET)
+# TreeSitter for code parsing
+# First check if Tree-sitter is available from system packages
+set(USE_SYSTEM_TREE_SITTER ON)
 
-# Set options for tree-sitter build
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build tree-sitter as a static library")
-
-# Set compile definition globally for tree-sitter
-add_compile_definitions(TREE_SITTER_UTF8=0)
-
-FetchContent_Declare(
-    tree-sitter
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
-    GIT_TAG v0.20.8
-)
-
-# Apply patch to tree-sitter to make it work without ICU
-FetchContent_GetProperties(tree-sitter)
-if(NOT tree-sitter_POPULATED)
-    FetchContent_Populate(tree-sitter)
+if(USE_SYSTEM_TREE_SITTER)
+    # Find system-installed Tree-sitter library
+    find_library(TREE_SITTER_LIB
+        NAMES tree-sitter
+        PATHS ${TREE_SITTER_LIB} /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/lib
+        DOC "Path to the Tree-sitter library"
+    )
     
-    # Patch the tree-sitter source to disable unicode support if ICU is not found
-    if(NOT ICU_FOUND)
-        file(WRITE ${tree-sitter_SOURCE_DIR}/lib/src/unicode/utf8.h 
-"#ifndef TREE_SITTER_UTF8_H_
-#define TREE_SITTER_UTF8_H_
-
-/* Simple UTF8 implementation that doesn't require ICU */
-#define utf8proc_uint8_t unsigned char
-#define utf8proc_int32_t int
-#define utf8proc_ssize_t long
-
-static inline utf8proc_ssize_t utf8proc_iterate(
-  const utf8proc_uint8_t *str, utf8proc_ssize_t strlen, utf8proc_int32_t *codepoint_ref
-) {
-  if (strlen <= 0) return 0;
-  
-  *codepoint_ref = str[0];
-  
-  if (str[0] < 128) {
-    return 1;
-  } else if ((str[0] & 0xE0) == 0xC0) {
-    if (strlen < 2) return -1;
-    *codepoint_ref = ((str[0] & 0x1F) << 6) | (str[1] & 0x3F);
-    return 2;
-  } else if ((str[0] & 0xF0) == 0xE0) {
-    if (strlen < 3) return -1;
-    *codepoint_ref = ((str[0] & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
-    return 3;
-  } else if ((str[0] & 0xF8) == 0xF0) {
-    if (strlen < 4) return -1;
-    *codepoint_ref = ((str[0] & 0x07) << 18) | ((str[1] & 0x3F) << 12) | ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
-    return 4;
-  } else {
-    return -1;
-  }
-}
-
-#endif // TREE_SITTER_UTF8_H_
-")
+    find_path(TREE_SITTER_INCLUDE_DIR
+        NAMES tree_sitter/api.h
+        PATHS ${TREE_SITTER_INCLUDE_DIR} /usr/include/tree-sitter /usr/include
+        DOC "Path to the Tree-sitter include directory"
+    )
+    
+    if(TREE_SITTER_LIB AND TREE_SITTER_INCLUDE_DIR)
+        message(STATUS "Found system Tree-sitter: ${TREE_SITTER_LIB}")
+        include_directories(${TREE_SITTER_INCLUDE_DIR})
+        # Create an imported target for Tree-sitter
+        if(NOT TARGET tree-sitter)
+            add_library(tree-sitter SHARED IMPORTED)
+            set_target_properties(tree-sitter PROPERTIES
+                IMPORTED_LOCATION "${TREE_SITTER_LIB}"
+                INTERFACE_INCLUDE_DIRECTORIES "${TREE_SITTER_INCLUDE_DIR}"
+            )
+        endif()
+        # Set compile definition globally for tree-sitter
+        add_compile_definitions(TREE_SITTER_SYSTEM=1)
+    else()
+        message(WARNING "System Tree-sitter not found. Falling back to building from source.")
+        set(USE_SYSTEM_TREE_SITTER OFF)
     endif()
-endif()
-
-# Make tree-sitter available
-FetchContent_MakeAvailable(tree-sitter)
-
-# TreeSitter language parsers
-FetchContent_Declare(
-    tree-sitter-cpp
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
-    GIT_TAG v0.20.0
-)
-FetchContent_MakeAvailable(tree-sitter-cpp)
-
-FetchContent_Declare(
-    tree-sitter-c
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c.git
-    GIT_TAG v0.20.2
-)
-FetchContent_MakeAvailable(tree-sitter-c)
-
-FetchContent_Declare(
-    tree-sitter-python
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-python.git
-    GIT_TAG v0.20.2
-)
-FetchContent_MakeAvailable(tree-sitter-python)
-
-FetchContent_Declare(
-    tree-sitter-javascript
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-javascript.git
-    GIT_TAG v0.20.4
-)
-FetchContent_MakeAvailable(tree-sitter-javascript)
-
-# Build TreeSitter library
-add_library(tree-sitter STATIC
-    ${tree-sitter_SOURCE_DIR}/lib/src/lib.c
-)
-set_target_properties(tree-sitter PROPERTIES LINKER_LANGUAGE C)
-target_include_directories(tree-sitter PUBLIC
-    ${tree-sitter_SOURCE_DIR}/lib/include
-)
-target_compile_definitions(tree-sitter PRIVATE TREE_SITTER_UTF8=0)
-
-# Link with ICU if it's available
-if(ICU_FOUND)
-    target_link_libraries(tree-sitter PRIVATE ICU::uc ICU::data)
-    target_include_directories(tree-sitter PRIVATE ${ICU_INCLUDE_DIRS})
 else()
-    message(STATUS "ICU library not found, using Unicode compatibility mode")
-    # Ensure we're not trying to use ICU
-    target_compile_definitions(tree-sitter PRIVATE TREE_SITTER_UTF8=0)
+    message(STATUS "Using Tree-sitter from source")
 endif()
 
-# Build TreeSitter language parsers
-add_library(tree-sitter-cpp STATIC
-    ${tree-sitter-cpp_SOURCE_DIR}/src/parser.c
-)
-set_target_properties(tree-sitter-cpp PROPERTIES LINKER_LANGUAGE C)
-target_include_directories(tree-sitter-cpp PUBLIC
-    ${tree-sitter-cpp_SOURCE_DIR}/src
-    ${tree-sitter_SOURCE_DIR}/lib/include
-)
+# If system Tree-sitter wasn't found, build from source
+if(NOT USE_SYSTEM_TREE_SITTER)
+    # First check if ICU is available
+    find_package(ICU COMPONENTS uc data QUIET)
 
-add_library(tree-sitter-c STATIC
-    ${tree-sitter-c_SOURCE_DIR}/src/parser.c
-)
-set_target_properties(tree-sitter-c PROPERTIES LINKER_LANGUAGE C)
-target_include_directories(tree-sitter-c PUBLIC
-    ${tree-sitter-c_SOURCE_DIR}/src
-    ${tree-sitter_SOURCE_DIR}/lib/include
-)
+    # Set options for tree-sitter build
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build tree-sitter as a static library")
 
-add_library(tree-sitter-python STATIC
-    ${tree-sitter-python_SOURCE_DIR}/src/parser.c
-)
-set_target_properties(tree-sitter-python PROPERTIES LINKER_LANGUAGE C)
-target_include_directories(tree-sitter-python PUBLIC
-    ${tree-sitter-python_SOURCE_DIR}/src
-    ${tree-sitter_SOURCE_DIR}/lib/include
-)
+    # Set compile definition globally for tree-sitter
+    add_compile_definitions(TREE_SITTER_UTF8=0)
 
-add_library(tree-sitter-javascript STATIC
-    ${tree-sitter-javascript_SOURCE_DIR}/src/parser.c
-)
-set_target_properties(tree-sitter-javascript PROPERTIES LINKER_LANGUAGE C)
-target_include_directories(tree-sitter-javascript PUBLIC
-    ${tree-sitter-javascript_SOURCE_DIR}/src
-    ${tree-sitter_SOURCE_DIR}/lib/include
-)
+    FetchContent_Declare(
+        tree-sitter
+        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
+        GIT_TAG v0.20.8
+    )
+
+    # Apply patch to tree-sitter to make it work without ICU
+    FetchContent_GetProperties(tree-sitter)
+    if(NOT tree-sitter_POPULATED)
+        FetchContent_Populate(tree-sitter)
+        
+        # Patch the tree-sitter source to disable unicode support if ICU is not found
+        if(NOT ICU_FOUND)
+            file(WRITE ${tree-sitter_SOURCE_DIR}/lib/src/unicode/utf8.h 
+    "#ifndef TREE_SITTER_UTF8_H_
+    #define TREE_SITTER_UTF8_H_
+
+    /* Simple UTF8 implementation that doesn't require ICU */
+    #define utf8proc_uint8_t unsigned char
+    #define utf8proc_int32_t int
+    #define utf8proc_ssize_t long
+
+    static inline utf8proc_ssize_t utf8proc_iterate(
+    const utf8proc_uint8_t *str, utf8proc_ssize_t strlen, utf8proc_int32_t *codepoint_ref
+    ) {
+    if (strlen <= 0) return 0;
+    
+    *codepoint_ref = str[0];
+    
+    if (str[0] < 128) {
+        return 1;
+    } else if ((str[0] & 0xE0) == 0xC0) {
+        if (strlen < 2) return -1;
+        *codepoint_ref = ((str[0] & 0x1F) << 6) | (str[1] & 0x3F);
+        return 2;
+    } else if ((str[0] & 0xF0) == 0xE0) {
+        if (strlen < 3) return -1;
+        *codepoint_ref = ((str[0] & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
+        return 3;
+    } else if ((str[0] & 0xF8) == 0xF0) {
+        if (strlen < 4) return -1;
+        *codepoint_ref = ((str[0] & 0x07) << 18) | ((str[1] & 0x3F) << 12) | ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
+        return 4;
+    } else {
+        return -1;
+    }
+    }
+
+    #endif // TREE_SITTER_UTF8_H_
+    ")
+        endif()
+    endif()
+
+    # Make tree-sitter available
+    FetchContent_MakeAvailable(tree-sitter)
+
+    # TreeSitter language parsers
+    FetchContent_Declare(
+        tree-sitter-cpp
+        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
+        GIT_TAG v0.20.0
+    )
+    FetchContent_MakeAvailable(tree-sitter-cpp)
+
+    FetchContent_Declare(
+        tree-sitter-c
+        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c.git
+        GIT_TAG v0.20.2
+    )
+    FetchContent_MakeAvailable(tree-sitter-c)
+
+    FetchContent_Declare(
+        tree-sitter-python
+        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-python.git
+        GIT_TAG v0.20.2
+    )
+    FetchContent_MakeAvailable(tree-sitter-python)
+
+    FetchContent_Declare(
+        tree-sitter-javascript
+        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-javascript.git
+        GIT_TAG v0.20.4
+    )
+    FetchContent_MakeAvailable(tree-sitter-javascript)
+
+    # Build TreeSitter library
+    add_library(tree-sitter STATIC
+        ${tree-sitter_SOURCE_DIR}/lib/src/lib.c
+    )
+    set_target_properties(tree-sitter PROPERTIES LINKER_LANGUAGE C)
+    target_include_directories(tree-sitter PUBLIC
+        ${tree-sitter_SOURCE_DIR}/lib/include
+    )
+    target_compile_definitions(tree-sitter PRIVATE TREE_SITTER_UTF8=0)
+
+    # Link with ICU if it's available
+    if(ICU_FOUND)
+        target_link_libraries(tree-sitter PRIVATE ICU::uc ICU::data)
+        target_include_directories(tree-sitter PRIVATE ${ICU_INCLUDE_DIRS})
+    else()
+        message(STATUS "ICU library not found, using Unicode compatibility mode")
+        # Ensure we're not trying to use ICU
+        target_compile_definitions(tree-sitter PRIVATE TREE_SITTER_UTF8=0)
+    endif()
+
+    # Build TreeSitter language parsers
+    add_library(tree-sitter-cpp STATIC
+        ${tree-sitter-cpp_SOURCE_DIR}/src/parser.c
+    )
+    set_target_properties(tree-sitter-cpp PROPERTIES LINKER_LANGUAGE C)
+    target_include_directories(tree-sitter-cpp PUBLIC
+        ${tree-sitter-cpp_SOURCE_DIR}/src
+        ${tree-sitter_SOURCE_DIR}/lib/include
+    )
+
+    add_library(tree-sitter-c STATIC
+        ${tree-sitter-c_SOURCE_DIR}/src/parser.c
+    )
+    set_target_properties(tree-sitter-c PROPERTIES LINKER_LANGUAGE C)
+    target_include_directories(tree-sitter-c PUBLIC
+        ${tree-sitter-c_SOURCE_DIR}/src
+        ${tree-sitter_SOURCE_DIR}/lib/include
+    )
+
+    add_library(tree-sitter-python STATIC
+        ${tree-sitter-python_SOURCE_DIR}/src/parser.c
+    )
+    set_target_properties(tree-sitter-python PROPERTIES LINKER_LANGUAGE C)
+    target_include_directories(tree-sitter-python PUBLIC
+        ${tree-sitter-python_SOURCE_DIR}/src
+        ${tree-sitter_SOURCE_DIR}/lib/include
+    )
+
+    add_library(tree-sitter-javascript STATIC
+        ${tree-sitter-javascript_SOURCE_DIR}/src/parser.c
+    )
+    set_target_properties(tree-sitter-javascript PROPERTIES LINKER_LANGUAGE C)
+    target_include_directories(tree-sitter-javascript PUBLIC
+        ${tree-sitter-javascript_SOURCE_DIR}/src
+        ${tree-sitter_SOURCE_DIR}/lib/include
+    )
+endif()
 
 # tiktoken for tokenization
 option(USE_TIKTOKEN "Enable tiktoken for token counting" ON)
