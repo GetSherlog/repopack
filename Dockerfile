@@ -118,8 +118,14 @@ RUN mkdir -p /app/models && \
 # Set up work directory
 WORKDIR /app
 
+# Create directory for tree-sitter repositories
+RUN mkdir -p /app/external/tree-sitter-repos
+
 # Copy source code
 COPY . .
+
+# Copy tree-sitter repositories if they exist locally
+COPY external/tree-sitter-repos/ /app/external/tree-sitter-repos/
 
 # Build the project
 RUN rm -rf build && \
@@ -135,7 +141,6 @@ RUN rm -rf build && \
       -DONNX_RUNTIME_INCLUDE_DIR=/usr/local/include \
       -DTREE_SITTER_LIB="${TS_LIB}" \
       -DTREE_SITTER_INCLUDE_DIR="${TS_INCLUDE_DIR}" \
-      -DUSE_SYSTEM_TREE_SITTER=ON \
       -DCMAKE_BUILD_TYPE=Release && \
     cmake --build . --target repomix -j $(nproc) && \
     cmake --build . --target repomix_server -j $(nproc)

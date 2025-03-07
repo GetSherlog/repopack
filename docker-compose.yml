@@ -10,6 +10,7 @@ services:
       - TZ=UTC
     volumes:
       - shared-data:/app/shared
+      - ./external/tree-sitter-repos:/app/external/tree-sitter-repos
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/api/capabilities"]
       interval: 30s
