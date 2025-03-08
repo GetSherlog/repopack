@@ -14,12 +14,72 @@
 #include "code_ner.hpp"  // Make sure this include is present
 #include "repomix.hpp"  // For SummarizationOptions
 
+/**
+ * @brief File Processing Flow
+ * 
+ * ```mermaid
+ * flowchart TD
+ *     Start([Start]) --> ProcessDir[Process Directory]
+ *     ProcessDir --> CollectFiles[Collect Files]
+ *     CollectFiles --> ThreadPool{Create Thread Pool}
+ *     
+ *     ThreadPool -->|Success| ParallelProc[Parallel Processing]
+ *     ThreadPool -->|Failure| SequentialProc[Sequential Processing]
+ *     
+ *     ParallelProc --> WorkerThread[Worker Thread]
+ *     WorkerThread --> GetFile[Get File from Queue]
+ *     
+ *     GetFile -->|Empty| End([End])
+ *     GetFile -->|File Available| ProcessFile[Process File]
+ *     
+ *     ProcessFile --> ValidateFile{Validate File}
+ *     ValidateFile -->|Invalid| LogError[Log Error]
+ *     ValidateFile -->|Valid| CheckSize{Check Size}
+ *     
+ *     CheckSize -->|Large| MemoryMap[Use Memory Mapping]
+ *     CheckSize -->|Small| BufferedRead[Use Buffered Reading]
+ *     
+ *     MemoryMap --> Extract[Extract Information]
+ *     BufferedRead --> Extract
+ *     
+ *     Extract --> NER[Named Entity Recognition]
+ *     Extract --> Lines[Count Lines]
+ *     Extract --> Snippets[Extract Snippets]
+ *     Extract --> Signatures[Extract Signatures]
+ *     Extract --> Comments[Extract Comments]
+ *     
+ *     NER --> Summarize{Should Summarize?}
+ *     Lines --> Summarize
+ *     Snippets --> Summarize
+ *     Signatures --> Summarize
+ *     Comments --> Summarize
+ *     
+ *     Summarize -->|Yes| CreateSummary[Create Summary]
+ *     Summarize -->|No| StoreResult[Store Result]
+ *     CreateSummary --> StoreResult
+ *     
+ *     StoreResult --> GetFile
+ *     LogError --> GetFile
+ *     
+ *     SequentialProc --> ProcessFile
+ * ```
+ */
+
 // Size threshold for using memory mapping (files larger than this will use memory mapping)
 constexpr size_t MMAP_THRESHOLD = 1 * 1024 * 1024; // 1 MB
 
 // Add a buffer size for reading files
 constexpr size_t FILE_BUFFER_SIZE = 128 * 1024; // 128 KB
 
+/**
+ * @brief Constructs a new FileProcessor object
+ * 
+ * @param patternMatcher Reference to a PatternMatcher object used to determine which files to process
+ * @param numThreads Number of threads to use for parallel processing. If 0, defaults to 1 thread
+ * 
+ * Initializes a FileProcessor with the specified pattern matcher and number of threads.
+ * Pre-allocates buffers that will be reused during file processing.
+ */
 FileProcessor::FileProcessor(const PatternMatcher& patternMatcher, unsigned int numThreads)
     : patternMatcher_(patternMatcher), 
       numThreads_(numThreads == 0 ? 1 : numThreads),
@@ -28,6 +88,12 @@ FileProcessor::FileProcessor(const PatternMatcher& patternMatcher, unsigned int 
     fileReadBuffer_.resize(FILE_BUFFER_SIZE);
 }
 
+/**
+ * @brief Destroys the FileProcessor object
+ * 
+ * Ensures all worker threads are properly joined before destruction.
+ * Sets the done_ flag to true to signal threads to stop processing.
+ */
 FileProcessor::~FileProcessor() {
     // Make sure threads are joined
     done_ = true;
@@ -38,18 +104,40 @@ FileProcessor::~FileProcessor() {
     }
 }
 
-std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const fs::path& dir) {
+/**
+ * @brief Processes all files in a directory using multiple threads
+ * 
+ * @param dir Path to the directory to process
+ * @param useParallelCollection Whether to use parallel file collection
+ * @return std::vector<FileProcessor::ProcessedFile> Vector of processed file results
+ * @throws std::runtime_error if the directory is invalid or cannot be accessed
+ * 
+ * This method:
+ * 1. Validates the input directory
+ * 2. Collects all files that should be processed
+ * 3. Creates worker threads to process files in parallel
+ * 4. Falls back to sequential processing if thread creation fails
+ * 5. Returns results of all processed files
+ */
+std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const fs::path& dir, bool useParallelCollection) {
     // Validate directory
     if (!fs::exists(dir) || !fs::is_directory(dir)) {
         throw std::runtime_error("Invalid directory: " + dir.string());
     }
     
+    // If using parallel collection, delegate to that implementation
+    if (useParallelCollection) {
+        // Use a reasonable default batch size
+        const size_t defaultBatchSize = 100;
+        return processDirectoryParallel(dir, defaultBatchSize);
+    }
+    
+    // Otherwise, use the original implementation
     // Reset state
     done_ = false;
     fileQueue_ = std::queue<fs::path>();
     results_.clear();
     
-    // Collect all files to process first (allows better work distribution)
     collectFiles(dir);
     
     // If we have files to process, start worker threads
@@ -61,19 +149,14 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const 
         bool threadsStarted = true;
         
         try {
-            // Start with just 1 thread, then add more if successful
-            workers_.emplace_back(&FileProcessor::workerThread, this);
-            
-            // If first thread creation succeeded, try to add more threads
-            if (actualThreads > 1) {
-                for (unsigned int i = 1; i < actualThreads; ++i) {
-                    try {
-                        workers_.emplace_back(&FileProcessor::workerThread, this);
-                    } catch (const std::system_error& e) {
-                        // If we can't create more threads, just use what we have
-                        std::cerr << "Warning: Could not create additional thread: " << e.what() << std::endl;
-                        break;
-                    }
+            // Create worker threads
+            for (unsigned int i = 0; i < actualThreads; ++i) {
+                try {
+                    workers_.emplace_back(&FileProcessor::workerThread, this);
+                } catch (const std::system_error& e) {
+                    // If we can't create more threads, just use what we have
+                    std::cerr << "Warning: Could not create additional thread: " << e.what() << std::endl;
+                    break;
                 }
             }
             
@@ -84,9 +167,6 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const 
                 }
             }
         } catch (const std::system_error& e) {
-            // Handle thread creation failure (common in WASM environment)
-            std::cerr << "Warning: Thread creation failed: " << e.what() << std::endl;
-            std::cerr << "Falling back to single-threaded processing" << std::endl;
             threadsStarted = false;
             
             // Clean up any threads that were created
@@ -128,10 +208,21 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const 
     return results_;
 }
 
+/**
+ * @brief Collects all files from a directory that should be processed
+ * 
+ * @param dir Path to the directory to scan
+ * 
+ * Recursively traverses the directory and adds files to the processing queue
+ * if they match the criteria defined by the pattern matcher.
+ * Uses a two-pass approach to minimize lock contention:
+ * 1. First collects files without locking
+ * 2. Then adds all files to the queue in a single lock operation
+ */
 void FileProcessor::collectFiles(const fs::path& dir) {
     try {
         std::vector<fs::path> files;
-        files.reserve(1000); // Pre-allocate space for better performance
+        files.reserve(1000);
         
         // First pass: collect all files without locking the mutex
         for (const auto& entry : fs::recursive_directory_iterator(dir)) {
@@ -156,6 +247,15 @@ void FileProcessor::collectFiles(const fs::path& dir) {
     }
 }
 
+/**
+ * @brief Worker thread function that processes files from the queue
+ * 
+ * Continuously retrieves files from the shared queue and processes them
+ * until either the queue is empty or the done_ flag is set.
+ * Results are added to the shared results vector in a thread-safe manner.
+ * Any errors during processing are caught and logged, with error entries
+ * added to the results.
+ */
 void FileProcessor::workerThread() {
     while (!done_) {
         fs::path filePath;
@@ -197,6 +297,22 @@ void FileProcessor::workerThread() {
     }
 }
 
+/**
+ * @brief Processes a single file and returns the results
+ * 
+ * @param filePath Path to the file to process
+ * @return ProcessedFile Structure containing the processing results
+ * 
+ * This method:
+ * 1. Validates the file exists and is accessible
+ * 2. Checks file size and type constraints
+ * 3. Reads and processes the file content
+ * 4. Extracts metadata like line count and snippets
+ * 5. Performs named entity recognition if enabled
+ * 
+ * The method handles various error conditions and sets appropriate
+ * error messages in the result structure if processing fails.
+ */
 FileProcessor::ProcessedFile FileProcessor::processFile(const fs::path& filePath) const {
     ProcessedFile result;
     result.path = filePath;
@@ -239,7 +355,7 @@ FileProcessor::ProcessedFile FileProcessor::processFile(const fs::path& filePath
         }
         
         // Extract first N lines as a summary
-        result.firstLines = extractFirstNLines(content, 10);
+        result.firstLines = extractFirstNLines(content, 50);
         
         // Extract representative snippets
         result.snippets = extractRepresentativeSnippets(content, 3);
@@ -262,6 +378,16 @@ FileProcessor::ProcessedFile FileProcessor::processFile(const fs::path& filePath
     return result;
 }
 
+/**
+ * @brief Determines if a file should be processed using memory mapping
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file should use memory mapping, false otherwise
+ * 
+ * Memory mapping is used for files larger than MMAP_THRESHOLD (1MB).
+ * The method checks if the file exists and is a regular file before
+ * making the determination.
+ */
 bool FileProcessor::shouldUseMemoryMapping(const fs::path& filePath) const {
     // Check if file exists and is larger than threshold
     try {
@@ -273,6 +399,17 @@ bool FileProcessor::shouldUseMemoryMapping(const fs::path& filePath) const {
     }
 }
 
+/**
+ * @brief Processes a file using memory mapping for efficient reading
+ * 
+ * @param filePath Path to the file to process
+ * @return ProcessedFile Structure containing the processing results
+ * @throws std::runtime_error if memory mapping fails
+ * 
+ * Uses memory mapping for efficient processing of large files.
+ * Falls back to regular file processing if memory mapping fails.
+ * Handles empty files and properly unmaps memory when done.
+ */
 FileProcessor::ProcessedFile FileProcessor::processFileWithMemoryMapping(const fs::path& filePath) {
     ProcessedFile result;
     result.path = filePath;
@@ -323,6 +460,15 @@ FileProcessor::ProcessedFile FileProcessor::processFileWithMemoryMapping(const f
     return result;
 }
 
+/**
+ * @brief Counts the number of lines in a string
+ * 
+ * @param content The string content to count lines in
+ * @return size_t The number of lines in the content
+ * 
+ * Uses an optimized approach with std::count to count newlines.
+ * Handles the special case where the last line doesn't end with a newline.
+ */
 size_t FileProcessor::countLines(const std::string& content) const {
     // Optimized line counting using std::count
     size_t count = std::count(content.begin(), content.end(), '\n');
@@ -335,6 +481,21 @@ size_t FileProcessor::countLines(const std::string& content) const {
     return count;
 }
 
+/**
+ * @brief Determines if a file should be processed based on various criteria
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file should be processed, false otherwise
+ * 
+ * Checks multiple criteria:
+ * 1. Must be a regular file
+ * 2. Size must be under MAX_FILE_SIZE (100MB)
+ * 3. Must not be a binary file
+ * 4. Must match patterns defined in patternMatcher_
+ * 
+ * Uses a simple heuristic to detect binary files by checking for null bytes
+ * in the first few KB of the file.
+ */
 bool FileProcessor::shouldProcessFile(const fs::path& filePath) const {
     // Skip if not a regular file
     if (!fs::is_regular_file(filePath)) {
@@ -379,12 +540,28 @@ bool FileProcessor::shouldProcessFile(const fs::path& filePath) const {
     return patternMatcher_.shouldProcess(filePath);
 }
 
-// Add implementation for setting summarization options
+/**
+ * @brief Sets the options for file summarization
+ * 
+ * @param options The summarization options to use
+ * 
+ * Updates the internal summarization options that control how files
+ * are summarized during processing. These options affect what information
+ * is extracted and included in the file summaries.
+ */
 void FileProcessor::setSummarizationOptions(const SummarizationOptions& options) {
     summarizationOptions_ = options;
 }
 
-// Determine if a file should be summarized based on size and settings
+/**
+ * @brief Determines if a file should be summarized based on size and settings
+ * 
+ * @param file The processed file to check
+ * @return bool True if the file should be summarized, false otherwise
+ * 
+ * Checks if summarization is enabled and if the file size exceeds
+ * the configured threshold in the summarization options.
+ */
 bool FileProcessor::shouldSummarizeFile(const ProcessedFile& file) const {
     if (!summarizationOptions_.enabled) {
         return false;
@@ -393,7 +570,23 @@ bool FileProcessor::shouldSummarizeFile(const ProcessedFile& file) const {
     return file.byteSize > summarizationOptions_.fileSizeThreshold;
 }
 
-// Main summarization method
+/**
+ * @brief Creates a summary of a processed file
+ * 
+ * @param file The processed file to summarize
+ * @return std::string The generated summary
+ * 
+ * Generates a comprehensive summary of the file based on enabled options:
+ * - Named Entity Recognition results
+ * - First N lines
+ * - Function and class signatures
+ * - Docstrings and comments
+ * - Representative code snippets
+ * 
+ * Special handling is applied for README files if the option is enabled.
+ * The summary includes headers indicating which summarization techniques
+ * were applied.
+ */
 std::string FileProcessor::summarizeFile(const ProcessedFile& file) const {
     if (!shouldSummarizeFile(file)) {
         return file.content; // Return original content if summarization not needed
@@ -465,6 +658,11 @@ std::string FileProcessor::summarizeFile(const ProcessedFile& file) const {
     
     summary << "/* */" << std::endl << std::endl;
     
+    // If no summarization technique was applied, return original content
+    if (!atLeastOneTechnique) {
+        return file.content;
+    }
+    
     std::vector<std::string> summaryLines;
     
     // Extract and add named entities first if enabled
@@ -535,7 +733,16 @@ std::string FileProcessor::summarizeFile(const ProcessedFile& file) const {
     return summary.str();
 }
 
-// Extract the first N lines from a string
+/**
+ * @brief Extracts the first N lines from a string
+ * 
+ * @param content The string content to extract lines from
+ * @param n The number of lines to extract
+ * @return std::string The first N lines of content
+ * 
+ * Uses a stream-based approach to efficiently extract the first N lines
+ * from the content. Preserves line endings in the extracted text.
+ */
 std::string FileProcessor::extractFirstNLines(const std::string& content, int n) const {
     std::istringstream iss(content);
     std::string line;
@@ -550,7 +757,21 @@ std::string FileProcessor::extractFirstNLines(const std::string& content, int n)
     return result.str();
 }
 
-// Extract function and class signatures using regex or tree-sitter
+/**
+ * @brief Extracts function and class signatures from code
+ * 
+ * @param content The source code content
+ * @param filePath The path to the source file (used to determine language)
+ * @return std::string Extracted signatures formatted as a string
+ * 
+ * Supports multiple programming languages:
+ * - C/C++: Functions, classes, and structs
+ * - Python: Functions and classes
+ * - JavaScript/TypeScript: Functions, classes, and methods
+ * 
+ * Uses regex patterns tailored to each language to extract signatures.
+ * Handles various function/method declaration styles and modifiers.
+ */
 std::string FileProcessor::extractSignatures(const std::string& content, const fs::path& filePath) const {
     std::stringstream result;
     std::string extension = filePath.extension().string();
@@ -626,7 +847,19 @@ std::string FileProcessor::extractSignatures(const std::string& content, const f
     return result.str();
 }
 
-// Extract docstrings and important comments
+/**
+ * @brief Extracts docstrings and important comments from code
+ * 
+ * @param content The source code content
+ * @return std::string Extracted documentation formatted as a string
+ * 
+ * Extracts multiple types of documentation:
+ * - Multi-line comments (C-style /* ... */)
+ * - Single-line comments (// style)
+ * - Python docstrings (""" ... """ or ''' ... ''')
+ * 
+ * Preserves the original formatting of the extracted documentation.
+ */
 std::string FileProcessor::extractDocstrings(const std::string& content) const {
     std::stringstream result;
     std::regex multiLineCommentRegex(R"(/\*[\s\S]*?\*/)");
@@ -661,7 +894,17 @@ std::string FileProcessor::extractDocstrings(const std::string& content) const {
     return result.str();
 }
 
-// Extract representative snippets from different parts of the file
+/**
+ * @brief Extracts representative code snippets from different parts of the file
+ * 
+ * @param content The source code content
+ * @param count Number of snippets to extract
+ * @return std::string Extracted snippets formatted as a string
+ * 
+ * Extracts evenly spaced snippets from throughout the file to provide
+ * a representative sample of the code. Each snippet includes line numbers
+ * and is properly formatted with headers.
+ */
 std::string FileProcessor::extractRepresentativeSnippets(const std::string& content, int count) const {
     std::stringstream result;
     std::istringstream iss(content);
@@ -703,7 +946,19 @@ std::string FileProcessor::extractRepresentativeSnippets(const std::string& cont
     return result.str();
 }
 
-// Check if a file is a README file
+/**
+ * @brief Checks if a file is a README file
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file is a README file, false otherwise
+ * 
+ * Checks various common README file patterns:
+ * - readme.md
+ * - readme.txt
+ * - readme (no extension)
+ * - Any file starting with readme.
+ * Case-insensitive matching is used.
+ */
 bool FileProcessor::isReadmeFile(const fs::path& filePath) const {
     std::string filename = filePath.filename().string();
     std::transform(filename.begin(), filename.end(), filename.begin(), ::tolower);
@@ -712,7 +967,14 @@ bool FileProcessor::isReadmeFile(const fs::path& filePath) const {
             filename == "readme" || filename.find("readme.") == 0);
 }
 
-// Code NER access method
+/**
+ * @brief Gets the CodeNER instance for named entity recognition
+ * 
+ * @return CodeNER* Pointer to the CodeNER instance, or nullptr if not available
+ * 
+ * Lazily initializes the CodeNER instance when first needed.
+ * Only creates the instance if entity recognition is enabled in the options.
+ */
 CodeNER* FileProcessor::getCodeNER() const {
     // Lazy initialization of the CodeNER instance
     if (!codeNER_ && summarizationOptions_.includeEntityRecognition) {
@@ -721,7 +983,23 @@ CodeNER* FileProcessor::getCodeNER() const {
     return codeNER_.get();
 }
 
-// Format entities as a string
+/**
+ * @brief Formats extracted named entities into a readable string
+ * 
+ * @param entities Vector of named entities to format
+ * @param groupByType Whether to group entities by their type
+ * @return std::string Formatted string representation of the entities
+ * 
+ * If groupByType is true, entities are grouped into categories:
+ * - Classes
+ * - Functions
+ * - Variables
+ * - Enums
+ * - Imports/Includes
+ * - Other
+ * 
+ * Each category is properly formatted with headers and consistent spacing.
+ */
 std::string FileProcessor::formatEntities(const std::vector<NamedEntity>& entities, bool groupByType) const {
     if (entities.empty()) {
         return "";
@@ -802,7 +1080,17 @@ std::string FileProcessor::formatEntities(const std::vector<NamedEntity>& entiti
     return result.str();
 }
 
-// Optimize file reading methods
+/**
+ * @brief Reads a file's contents using the most appropriate method
+ * 
+ * @param filePath Path to the file to read
+ * @return std::string The file's contents
+ * @throws std::runtime_error if file cannot be read
+ * 
+ * Automatically chooses between buffered reading and memory mapping
+ * based on file size. Uses memory mapping for files larger than
+ * MMAP_THRESHOLD (1MB) and buffered reading for smaller files.
+ */
 std::string FileProcessor::readFile(const fs::path& filePath) const {
     std::error_code ec;
     uintmax_t fileSize = fs::file_size(filePath, ec);
@@ -841,6 +1129,17 @@ std::string FileProcessor::readFile(const fs::path& filePath) const {
     return content;
 }
 
+/**
+ * @brief Reads a large file using memory mapping
+ * 
+ * @param filePath Path to the file to read
+ * @param fileSize Size of the file in bytes
+ * @return std::string The file's contents
+ * @throws std::runtime_error if memory mapping fails
+ * 
+ * Uses memory mapping for efficient reading of large files.
+ * Properly handles cleanup of mapped memory and file descriptors.
+ */
 std::string FileProcessor::readLargeFile(const fs::path& filePath, uintmax_t fileSize) const {
     int fd = open(filePath.c_str(), O_RDONLY);
     if (fd == -1) {
@@ -863,6 +1162,19 @@ std::string FileProcessor::readLargeFile(const fs::path& filePath, uintmax_t fil
     return content;
 }
 
+/**
+ * @brief Determines if a file is binary
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file appears to be binary, false otherwise
+ * 
+ * Uses multiple heuristics to detect binary files:
+ * 1. Checks file extension against known binary extensions
+ * 2. Examines file content for null bytes and non-text characters
+ * 3. Analyzes the ratio of text to binary content
+ * 
+ * The method is conservative and will return false if unsure.
+ */
 bool FileProcessor::isBinaryFile(const fs::path& filePath) const {
     // Get file extension (lowercase)
     std::string ext = filePath.extension().string();
@@ -888,7 +1200,7 @@ bool FileProcessor::isBinaryFile(const fs::path& filePath) const {
         
         // Only read a small portion of the file to detect binary content
         std::ifstream file(filePath, std::ios::binary);
-        if (!file.is_open()) {
+        if (!file) {
             // If we can't open it, assume it's not binary
             return false;
         }
@@ -921,7 +1233,23 @@ bool FileProcessor::isBinaryFile(const fs::path& filePath) const {
     }
 }
 
-// Named entity recognition implementation
+/**
+ * @brief Extracts named entities from source code
+ * 
+ * @param content The source code content
+ * @param filePath Path to the source file
+ * @return std::vector<NamedEntity> Vector of extracted named entities
+ * 
+ * Uses the CodeNER system to extract named entities such as:
+ * - Class names
+ * - Function names
+ * - Variable names
+ * - Enum values
+ * - Import statements
+ * 
+ * Entities are filtered based on summarization options.
+ * The number of returned entities can be limited by maxEntities option.
+ */
 std::vector<FileProcessor::NamedEntity> FileProcessor::extractNamedEntities(const std::string& content, const fs::path& filePath) const {
     // If no NER is required or content is empty, return empty
     if (!performNER_ || content.empty()) {
@@ -1009,4 +1337,219 @@ std::vector<FileProcessor::NamedEntity> FileProcessor::extractNamedEntities(cons
     }
     
     return entities;
+}
+
+/**
+ * @brief Process all files in a directory with parallel file collection
+ * 
+ * @param dir Directory to process
+ * @param batchSize Size of batches when adding files to the queue
+ * @return std::vector<ProcessedFile> Results of processing
+ */
+std::vector<ProcessedFile> FileProcessor::processDirectoryParallel(const fs::path& dir, size_t batchSize) {
+    // Clear any existing results and queues
+    results_.clear();
+    
+    while (!fileQueue_.empty()) {
+        fileQueue_.pop();
+    }
+    
+    while (!directoryQueue_.empty()) {
+        directoryQueue_.pop();
+    }
+    
+    // Reset collection done flag
+    dirCollectionDone_ = false;
+    
+    // Start parallel file collection
+    collectFilesParallel(dir, batchSize);
+    
+    // Process files with worker threads
+    const unsigned int numThreads = std::thread::hardware_concurrency();
+    done_ = false;
+    
+    std::vector<std::thread> workers;
+    bool threadsStarted = true;
+    
+    try {
+        // Create worker threads
+        for (unsigned int i = 0; i < numThreads; ++i) {
+            try {
+                workers.emplace_back(&FileProcessor::workerThread, this);
+            } catch (const std::system_error& e) {
+                std::cerr << "Warning: Could not create worker thread: " << e.what() << std::endl;
+                threadsStarted = false;
+                break;
+            }
+        }
+        
+        // Wait for all worker threads to finish
+        for (auto& worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+    } catch (const std::system_error& e) {
+        threadsStarted = false;
+        
+        // Clean up any threads that were created
+        done_ = true;
+        for (auto& worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        workers.clear();
+    }
+    
+    // If thread creation failed, process files sequentially
+    if (!threadsStarted) {
+        // Fallback to sequential processing
+        while (!fileQueue_.empty()) {
+            fs::path filePath;
+            {
+                std::lock_guard<std::mutex> lock(queueMutex_);
+                if (fileQueue_.empty()) break;
+                filePath = fileQueue_.front();
+                fileQueue_.pop();
+            }
+            
+            try {
+                ProcessedFile result = processFile(filePath);
+                if (result.processed || result.skipped) {
+                    std::lock_guard<std::mutex> lock(resultsMutex_);
+                    results_.push_back(std::move(result));
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Error processing file " << filePath << ": " << e.what() << std::endl;
+            }
+        }
+    }
+    
+    return results_;
+}
+
+/**
+ * @brief Collects files in parallel from directories
+ * 
+ * @param dir Root directory to start collection from
+ * @param batchSize Size of batches when adding files to the queue
+ */
+void FileProcessor::collectFilesParallel(const fs::path& dir, size_t batchSize) {
+    // Add the root directory to the queue
+    addDirectoryToQueue(dir);
+    
+    // Determine number of threads for file collection
+    // Use hardware_concurrency but with a reasonable limit
+    unsigned int numCollectorThreads = std::min(
+        std::thread::hardware_concurrency(),
+        static_cast<unsigned int>(4)  // Limit to 4 threads for file collection to avoid too much I/O contention
+    );
+    
+    // Create collector threads
+    std::vector<std::thread> collectorThreads;
+    for (unsigned int i = 0; i < numCollectorThreads; ++i) {
+        collectorThreads.emplace_back(&FileProcessor::fileCollectorWorker, this, batchSize);
+    }
+    
+    // Wait for all collector threads to finish
+    for (auto& thread : collectorThreads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+}
+
+/**
+ * @brief Add a directory to the directory queue for parallel processing
+ * 
+ * @param dir Directory to add
+ */
+void FileProcessor::addDirectoryToQueue(const fs::path& dir) {
+    {
+        std::lock_guard<std::mutex> lock(dirQueueMutex_);
+        directoryQueue_.push(dir);
+    }
+    // Notify one waiting thread that a directory is available
+    dirQueueCondition_.notify_one();
+}
+
+/**
+ * @brief Worker function for parallel file collection
+ * 
+ * @param batchSize Size of batches when adding files to the queue
+ */
+void FileProcessor::fileCollectorWorker(size_t batchSize) {
+    // Local vector to collect files before adding them to the global queue
+    std::vector<fs::path> localFiles;
+    localFiles.reserve(batchSize);
+    
+    while (true) {
+        fs::path currentDir;
+        
+        // Try to get a directory from the queue
+        {
+            std::unique_lock<std::mutex> lock(dirQueueMutex_);
+            
+            // Wait until there's a directory or we're done
+            dirQueueCondition_.wait(lock, [this] {
+                return !directoryQueue_.empty() || dirCollectionDone_;
+            });
+            
+            // If queue is empty and collection is done, exit
+            if (directoryQueue_.empty()) {
+                if (dirCollectionDone_) {
+                    break;
+                }
+                continue;
+            }
+            
+            // Get a directory to process
+            currentDir = directoryQueue_.front();
+            directoryQueue_.pop();
+        }
+        
+        try {
+            // First, handle files in the current directory (non-recursive)
+            for (const auto& entry : fs::directory_iterator(currentDir)) {
+                if (fs::is_regular_file(entry)) {
+                    if (shouldProcessFile(entry.path())) {
+                        localFiles.push_back(entry.path());
+                        
+                        // If batch size reached, add to global queue
+                        if (localFiles.size() >= batchSize) {
+                            std::lock_guard<std::mutex> lock(queueMutex_);
+                            for (const auto& file : localFiles) {
+                                fileQueue_.push(file);
+                            }
+                            localFiles.clear();
+                        }
+                    }
+                } else if (fs::is_directory(entry)) {
+                    // Add subdirectory to the queue for processing
+                    addDirectoryToQueue(entry.path());
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error collecting files from directory " << currentDir << ": " << e.what() << std::endl;
+        }
+    }
+    
+    // Add any remaining files to the global queue
+    if (!localFiles.empty()) {
+        std::lock_guard<std::mutex> lock(queueMutex_);
+        for (const auto& file : localFiles) {
+            fileQueue_.push(file);
+        }
+    }
+    
+    // Signal that one collector thread is done
+    // The last thread to finish will set dirCollectionDone_ to true
+    static std::atomic<int> finishedThreads(0);
+    if (++finishedThreads >= std::min(
+            std::thread::hardware_concurrency(),
+            static_cast<unsigned int>(4))) {
+        dirCollectionDone_ = true;
+        dirQueueCondition_.notify_all();
+    }
 }

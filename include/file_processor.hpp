@@ -120,8 +120,14 @@ public:
                         unsigned int numThreads = std::thread::hardware_concurrency());
     ~FileProcessor();
 
-    // Process a directory recursively with multithreading
-    std::vector<ProcessedFile> processDirectory(const fs::path& dir);
+    /**
+     * @brief Process all files in a directory
+     * 
+     * @param dir Directory to process
+     * @param useParallelCollection Whether to use parallel file collection (default: true)
+     * @return std::vector<ProcessedFile> Results of processing
+     */
+    std::vector<ProcessedFile> processDirectory(const fs::path& dir, bool useParallelCollection = true);
 
     // Process a single file
     ProcessedFile processFile(const fs::path& filePath) const;
@@ -134,6 +140,15 @@ public:
     
     // Check if a file is a README file
     bool isReadmeFile(const fs::path& filePath) const;
+
+    /**
+     * @brief Process all files in a directory with parallel file collection
+     * 
+     * @param dir Directory to process
+     * @param batchSize Size of batches when adding files to the queue
+     * @return std::vector<ProcessedFile> Results of processing
+     */
+    std::vector<ProcessedFile> processDirectoryParallel(const fs::path& dir, size_t batchSize = 100);
 
 private:
     const PatternMatcher& patternMatcher_;
@@ -197,4 +212,38 @@ private:
     // Content flags
     bool keepContent_ = true;
     bool performNER_ = true;
+
+    /**
+     * @brief Collects files in parallel from directories
+     * 
+     * @param dir Root directory to start collection from
+     * @param batchSize Size of batches when adding files to the queue
+     */
+    void collectFilesParallel(const fs::path& dir, size_t batchSize);
+    
+    /**
+     * @brief Worker function for parallel file collection
+     * 
+     * @param batchSize Size of batches when adding files to the queue
+     */
+    void fileCollectorWorker(size_t batchSize);
+    
+    /**
+     * @brief Add a directory to the directory queue for parallel processing
+     * 
+     * @param dir Directory to add
+     */
+    void addDirectoryToQueue(const fs::path& dir);
+    
+    // Queue of directories to be processed in parallel
+    std::queue<fs::path> directoryQueue_;
+    
+    // Mutex for directory queue access
+    std::mutex dirQueueMutex_;
+    
+    // Condition variable for directory queue
+    std::condition_variable dirQueueCondition_;
+    
+    // Signal for directory collectors to finish
+    std::atomic<bool> dirCollectionDone_{false};
 };

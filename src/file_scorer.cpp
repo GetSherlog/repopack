@@ -1,3 +1,14 @@
+/**
+ * @file file_scorer.cpp
+ * @brief Implementation of the FileScorer class for analyzing and scoring files in a repository.
+ *
+ * This file contains the implementation of the FileScorer class, which analyzes files
+ * in a source code repository and assigns scores based on various factors like project structure,
+ * file type, recency, file size, and code complexity. The class uses Tree-Sitter for parsing
+ * various programming languages to obtain detailed code metrics.
+ *
+ * @author RepoPackCPP Team
+ */
 #include "file_scorer.hpp"
 #include <fstream>
 #include <regex>
@@ -13,7 +24,12 @@
 #include "tree_sitter_types.hpp"
 #include <set>
 
-// Include language headers for TreeSitter
+/**
+ * @brief Include language headers for TreeSitter
+ * 
+ * External C declarations for tree-sitter language parsing.
+ * These are already declared in tree_sitter_types.hpp.
+ */
 extern "C" {
     // These are already declared in tree_sitter_types.hpp, so no need to redeclare
     // TSLanguage* tree_sitter_cpp();
@@ -27,20 +43,44 @@ namespace fs = std::filesystem;
 // For convenience
 using json = nlohmann::json;
 
+/**
+ * @brief Constructor for FileScorer with configuration
+ *
+ * @param config Configuration parameters that control file scoring behavior
+ */
 FileScorer::FileScorer(const FileScoringConfig& config)
     : config_(config) {
     // Initialize pattern matcher
     patternMatcher_ = std::make_unique<PatternMatcher>();
 }
 
+/**
+ * @brief Updates the scoring configuration
+ * 
+ * @param config The new configuration to use for file scoring
+ */
 void FileScorer::setConfig(const FileScoringConfig& config) {
     config_ = config;
 }
 
+/**
+ * @brief Get the current scoring configuration
+ * 
+ * @return const FileScoringConfig& A reference to the current configuration
+ */
 const FileScoringConfig& FileScorer::getConfig() const {
     return config_;
 }
 
+/**
+ * @brief Score all files in a repository
+ * 
+ * This method traverses the entire repository, scores each file according to the
+ * configured criteria, and returns a collection of scored files.
+ * 
+ * @param repoPath Path to the root of the repository
+ * @return std::vector<FileScorer::ScoredFile> Collection of files with their scores
+ */
 std::vector<FileScorer::ScoredFile> FileScorer::scoreRepository(const fs::path& repoPath) {
     if (!fs::exists(repoPath) || !fs::is_directory(repoPath)) {
         throw std::runtime_error("Invalid repository path: " + repoPath.string());
@@ -66,7 +106,7 @@ std::vector<FileScorer::ScoredFile> FileScorer::scoreRepository(const fs::path& 
             
             // Add dependency graph score if applicable
             if (config_.dependencyGraphWeight > 0.0f) {
-                float connectivityScore = calculateConnectivityScore(entry.path(), dependencyGraph);
+                float connectivityScore = calculateConnectivityScore(entry.path(), dependencyGraph, repoPath);
                 scoredFile.componentScores["connectivity"] = connectivityScore * config_.dependencyGraphWeight;
                 scoredFile.score += scoredFile.componentScores["connectivity"];
             }
@@ -93,6 +133,17 @@ std::vector<FileScorer::ScoredFile> FileScorer::scoreRepository(const fs::path& 
     return scoredFiles;
 }
 
+/**
+ * @brief Score a single file
+ * 
+ * Analyzes a file according to multiple criteria and computes a combined score.
+ * The score components include project structure, file type, recency, file size, 
+ * and code density.
+ * 
+ * @param filePath Path to the file to score
+ * @param repoRoot Path to the root of the repository containing the file
+ * @return FileScorer::ScoredFile Structure containing file path, score, and component scores
+ */
 FileScorer::ScoredFile FileScorer::scoreFile(const fs::path& filePath, const fs::path& repoRoot) {
     ScoredFile result;
     result.path = filePath;
@@ -121,6 +172,15 @@ FileScorer::ScoredFile FileScorer::scoreFile(const fs::path& filePath, const fs:
     return result;
 }
 
+/**
+ * @brief Get the list of files that pass the inclusion threshold
+ * 
+ * Filters the collection of scored files to include only those
+ * with scores above the configured inclusion threshold.
+ * 
+ * @param scoredFiles Collection of scored files to filter
+ * @return std::vector<fs::path> Paths of the selected files
+ */
 std::vector<fs::path> FileScorer::getSelectedFiles(const std::vector<ScoredFile>& scoredFiles) {
     std::vector<fs::path> selectedFiles;
     
@@ -133,6 +193,15 @@ std::vector<fs::path> FileScorer::getSelectedFiles(const std::vector<ScoredFile>
     return selectedFiles;
 }
 
+/**
+ * @brief Generate a human-readable report of file scores
+ * 
+ * Creates a formatted report showing the scores of all files
+ * and which ones were selected for inclusion.
+ * 
+ * @param scoredFiles Collection of scored files to report on
+ * @return std::string Formatted report text
+ */
 std::string FileScorer::getScoringReport(const std::vector<ScoredFile>& scoredFiles) const {
     json report;
     
@@ -193,6 +262,16 @@ std::string FileScorer::getScoringReport(const std::vector<ScoredFile>& scoredFi
     return report.dump(2); // Pretty-print with 2-space indentation
 }
 
+/**
+ * @brief Score a file based on its position in the project structure
+ * 
+ * Files in important locations (root level, top-level directories, entry points)
+ * and files with many connections in the dependency graph receive higher scores.
+ * 
+ * @param filePath Path to the file to score
+ * @param repoRoot Path to the repository root
+ * @return float Score component based on the project structure (0.0 to 1.0)
+ */
 float FileScorer::scoreProjectStructure(const fs::path& filePath, const fs::path& repoRoot) {
     fs::path relPath = fs::relative(filePath, repoRoot);
     std::string pathStr = relPath.string();
@@ -225,6 +304,15 @@ float FileScorer::scoreProjectStructure(const fs::path& filePath, const fs::path
     return score;
 }
 
+/**
+ * @brief Score a file based on its type
+ * 
+ * Different file types (source code, config, documentation, test files)
+ * receive different scores based on their configured weights.
+ * 
+ * @param filePath Path to the file to score
+ * @return float Score component based on the file type (0.0 to 1.0)
+ */
 float FileScorer::scoreFileType(const fs::path& filePath) {
     float score = 0.0f;
     
@@ -247,6 +335,15 @@ float FileScorer::scoreFileType(const fs::path& filePath) {
     return score;
 }
 
+/**
+ * @brief Score a file based on its modification recency
+ * 
+ * Recently modified files receive higher scores. The time window for considering
+ * a file as "recent" is configurable.
+ * 
+ * @param filePath Path to the file to score
+ * @return float Score component based on the file's recency (0.0 to 1.0)
+ */
 float FileScorer::scoreRecency(const fs::path& filePath) {
     if (config_.recentlyModifiedWeight <= 0.0f) {
         return 0.0f;
@@ -274,6 +371,15 @@ float FileScorer::scoreRecency(const fs::path& filePath) {
     return 0.0f;
 }
 
+/**
+ * @brief Score a file based on its size
+ * 
+ * Smaller files generally receive higher scores than larger files, 
+ * as they tend to be more focused and easier to comprehend.
+ * 
+ * @param filePath Path to the file to score
+ * @return float Score component based on the file size (0.0 to 1.0)
+ */
 float FileScorer::scoreFileSize(const fs::path& filePath) {
     if (config_.fileSizeWeight <= 0.0f) {
         return 0.0f;
@@ -296,6 +402,16 @@ float FileScorer::scoreFileSize(const fs::path& filePath) {
     return 0.0f;
 }
 
+/**
+ * @brief Score a file based on its code density and complexity
+ * 
+ * This evaluates the code's complexity, density, and quality.
+ * Higher density (more functionality in less space) generally scores higher,
+ * but excessive complexity may reduce the score.
+ * 
+ * @param filePath Path to the file to score
+ * @return float Score component based on code density and complexity (0.0 to 1.0)
+ */
 float FileScorer::scoreCodeDensity(const fs::path& filePath) {
     if (config_.codeDensityWeight <= 0.0f) {
         return 0.0f;
@@ -482,6 +598,15 @@ float FileScorer::scoreCodeDensity(const fs::path& filePath) {
     return 0.0f;
 }
 
+/**
+ * @brief Check if a file is a source code file
+ * 
+ * Determines if a file is a source code file based on its extension
+ * according to the configured source code file extensions.
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file is a source code file, false otherwise
+ */
 bool FileScorer::isSourceCodeFile(const fs::path& filePath) const {
     std::string extension = filePath.extension().string();
     return std::find(config_.sourceCodeExtensions.begin(), 
@@ -489,6 +614,15 @@ bool FileScorer::isSourceCodeFile(const fs::path& filePath) const {
                      extension) != config_.sourceCodeExtensions.end();
 }
 
+/**
+ * @brief Check if a file is a configuration file
+ * 
+ * Determines if a file is a configuration file based on its extension
+ * according to the configured configuration file extensions.
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file is a configuration file, false otherwise
+ */
 bool FileScorer::isConfigFile(const fs::path& filePath) const {
     std::string extension = filePath.extension().string();
     return std::find(config_.configFileExtensions.begin(), 
@@ -496,6 +630,15 @@ bool FileScorer::isConfigFile(const fs::path& filePath) const {
                      extension) != config_.configFileExtensions.end();
 }
 
+/**
+ * @brief Check if a file is a documentation file
+ * 
+ * Determines if a file is a documentation file based on its extension
+ * according to the configured documentation file extensions.
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file is a documentation file, false otherwise
+ */
 bool FileScorer::isDocumentationFile(const fs::path& filePath) const {
     std::string extension = filePath.extension().string();
     return std::find(config_.documentationExtensions.begin(), 
@@ -503,11 +646,29 @@ bool FileScorer::isDocumentationFile(const fs::path& filePath) const {
                      extension) != config_.documentationExtensions.end();
 }
 
+/**
+ * @brief Check if a file is a test file
+ * 
+ * Determines if a file is a test file based on its name or location
+ * according to the configured test file patterns.
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file is a test file, false otherwise
+ */
 bool FileScorer::isTestFile(const fs::path& filePath) const {
     std::string pathStr = filePath.string();
     return matchesAnyPattern(pathStr, config_.testFilePatterns);
 }
 
+/**
+ * @brief Check if a file is an entry point to the project
+ * 
+ * Identifies entry point files such as main.cpp, index.js, etc.
+ * based on common naming patterns.
+ * 
+ * @param filePath Path to the file to check
+ * @return bool True if the file is an entry point, false otherwise
+ */
 bool FileScorer::isEntryPoint(const fs::path& filePath) const {
     std::string filename = filePath.filename().string();
     
@@ -519,6 +680,16 @@ bool FileScorer::isEntryPoint(const fs::path& filePath) const {
     return matchesAnyPattern(filename, entryPointPatterns);
 }
 
+/**
+ * @brief Check if a path matches any of the given patterns
+ * 
+ * Uses regex matching to test if a path string matches any of the 
+ * patterns in the provided collection.
+ * 
+ * @param pathStr The path as a string to check against patterns
+ * @param patterns Collection of regex patterns to match against
+ * @return bool True if the path matches any pattern, false otherwise
+ */
 bool FileScorer::matchesAnyPattern(const std::string& pathStr, const std::vector<std::string>& patterns) const {
     for (const auto& pattern : patterns) {
         // Convert glob pattern to regex
@@ -547,6 +718,15 @@ bool FileScorer::matchesAnyPattern(const std::string& pathStr, const std::vector
     return false;
 }
 
+/**
+ * @brief Calculate file importance based on its location in the repository
+ * 
+ * Files at the root level or in important directories receive higher scores.
+ * 
+ * @param filePath Path to the file to evaluate
+ * @param repoRoot Path to the repository root
+ * @return float Importance score (0.0 to 1.0) based on location
+ */
 float FileScorer::calculateImportanceByLocation(const fs::path& filePath, const fs::path& repoRoot) const {
     fs::path relPath = fs::relative(filePath, repoRoot);
     int depth = std::distance(relPath.begin(), relPath.end());
@@ -555,6 +735,15 @@ float FileScorer::calculateImportanceByLocation(const fs::path& filePath, const 
     return 1.0f / (depth + 1.0f);
 }
 
+/**
+ * @brief Build a dependency graph for the repository
+ * 
+ * Scans the repository to identify dependencies between files
+ * by analyzing import statements, include directives, etc.
+ * 
+ * @param repoRoot Path to the repository root
+ * @return std::unordered_map<std::string, std::vector<std::string>> Map of file paths to their dependencies
+ */
 std::unordered_map<std::string, std::vector<std::string>> FileScorer::buildDependencyGraph(const fs::path& repoRoot) {
     std::unordered_map<std::string, std::vector<std::string>> graph;
     
@@ -796,11 +985,22 @@ std::unordered_map<std::string, std::vector<std::string>> FileScorer::buildDepen
     return graph;
 }
 
-// Helper function to resolve import paths to actual files
+/**
+ * @brief Resolve the absolute path of an imported file
+ * 
+ * Converts a relative import path to an absolute path based on
+ * the importing file's location and repository structure.
+ * 
+ * @param importPath The import path from the source file
+ * @param sourceFilePath Path to the file containing the import
+ * @param repoRoot Path to the repository root
+ * @param includeDirectories Additional directories to search for imports
+ * @return std::string Resolved absolute path or empty string if not resolved
+ */
 std::string FileScorer::resolveImportPath(const std::string& importPath, 
-                                       const fs::path& sourceFile, 
-                                       const fs::path& repoRoot,
-                                       const std::unordered_map<std::string, std::vector<fs::path>>& filesByName) {
+                                         const fs::path& sourceFilePath,
+                                         const fs::path& repoRoot,
+                                         const std::vector<std::string>& includeDirectories) {
     // Handle absolute path (relative to repo root)
     if (importPath.front() == '/') {
         fs::path absolutePath = repoRoot / importPath.substr(1);
@@ -811,7 +1011,7 @@ std::string FileScorer::resolveImportPath(const std::string& importPath,
     
     // Handle relative path
     if (importPath.substr(0, 2) == "./" || importPath.substr(0, 3) == "../") {
-        fs::path relativePath = sourceFile.parent_path() / importPath;
+        fs::path relativePath = sourceFilePath.parent_path() / importPath;
         
         // Normalize path
         try {
@@ -860,8 +1060,20 @@ std::string FileScorer::resolveImportPath(const std::string& importPath,
     return "";
 }
 
-float FileScorer::calculateConnectivityScore(const fs::path& filePath, 
-                                         const std::unordered_map<std::string, std::vector<std::string>>& depGraph) {
+/**
+ * @brief Calculate how connected a file is in the dependency graph
+ * 
+ * Evaluates a file's importance based on how many other files
+ * depend on it and how many files it depends on.
+ * 
+ * @param filePath Path to the file to evaluate
+ * @param dependencyGraph The dependency graph of the repository
+ * @param repoRoot Path to the repository root
+ * @return float Connectivity score (0.0 to 1.0)
+ */
+float FileScorer::calculateConnectivityScore(const fs::path& filePath,
+                                           const std::unordered_map<std::string, std::vector<std::string>>& dependencyGraph,
+                                           const fs::path& repoRoot) {
     std::string relPath = fs::relative(filePath, fs::current_path()).string();
     
     // Count incoming and outgoing connections
@@ -869,12 +1081,12 @@ float FileScorer::calculateConnectivityScore(const fs::path& filePath,
     int outgoingConnections = 0;
     
     // Count outgoing connections (files this file imports)
-    if (depGraph.find(relPath) != depGraph.end()) {
-        outgoingConnections = depGraph.at(relPath).size();
+    if (dependencyGraph.find(relPath) != dependencyGraph.end()) {
+        outgoingConnections = dependencyGraph.at(relPath).size();
     }
     
     // Count incoming connections (files that import this file)
-    for (const auto& [file, imports] : depGraph) {
+    for (const auto& [file, imports] : dependencyGraph) {
         if (file == relPath) {
             continue;
         }
@@ -900,6 +1112,15 @@ float FileScorer::calculateConnectivityScore(const fs::path& filePath,
     return std::min(1.0f, std::log2f(totalConnections + 1) / 5.0f);
 }
 
+/**
+ * @brief Analyze a file using Tree-Sitter for detailed code metrics
+ * 
+ * Uses the Tree-Sitter parsing library to analyze source code structure,
+ * count functions, classes, and statements to calculate code complexity.
+ * 
+ * @param filePath Path to the file to analyze
+ * @return float Code complexity score based on AST analysis
+ */
 float FileScorer::analyzeWithTreeSitter(const fs::path& filePath) {
     try {
         // Read file content
@@ -1060,6 +1281,16 @@ float FileScorer::analyzeWithTreeSitter(const fs::path& filePath) {
     }
 }
 
+/**
+ * @brief Analyze file content to determine its complexity
+ * 
+ * Analyzes the content of a file to assess its complexity
+ * by looking at factors like line count, comment ratio, etc.
+ * 
+ * @param filePath Path to the file to analyze
+ * @param content The content of the file as a string
+ * @return float Complexity score based on content analysis
+ */
 float FileScorer::analyzeFileContent(const fs::path& filePath, const std::string& content) {
     try {
         int totalLines = 0;
@@ -1231,6 +1462,14 @@ float FileScorer::analyzeFileContent(const fs::path& filePath, const std::string
     }
 }
 
+/**
+ * @brief Analyze file content by reading the file first
+ * 
+ * Opens and reads a file, then calls the content analysis function.
+ * 
+ * @param filePath Path to the file to analyze
+ * @return float Complexity score based on content analysis
+ */
 float FileScorer::analyzeFileContent(const fs::path& filePath) {
     try {
         // Read file content

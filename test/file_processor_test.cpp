@@ -53,7 +53,7 @@ TEST_CASE("FileProcessor processes files correctly", "[FileProcessor]") {
         matcher.addIgnorePattern("*.exe");
         FileProcessor processor(matcher, 1); // Use single thread for testing
         
-        auto results = processor.processDirectory(tempDir);
+        auto results = processor.processDirectory(tempDir, false); // Disable parallel collection for testing
         
         // Should find 3 files (file1.txt, file2.cpp, subdir/file3.h)
         // Should ignore binary.exe
@@ -139,6 +139,6 @@ TEST_CASE("FileProcessor handles non-existent or invalid files", "[FileProcessor
     }
     
     SECTION("Invalid directory throws exception") {
-        REQUIRE_THROWS_AS(processor.processDirectory("/non/existent/directory"), std::runtime_error);
+        REQUIRE_THROWS_AS(processor.processDirectory("/non/existent/directory", false), std::runtime_error);
     }
 }

@@ -158,8 +158,8 @@ bool Repomix::run() {
             // Process the selected files
             files = processSelectedFiles(selectedFiles);
         } else {
-            // Process all files using the standard method
-            files = fileProcessor_->processDirectory(options_.inputDir);
+            // Process all files using the standard method with parallel collection
+            files = fileProcessor_->processDirectory(options_.inputDir, true);
         }
         
         // End processing timer
@@ -299,8 +299,8 @@ void Repomix::writeOutput() {
     ss << "Directory structure:\n";
     ss << generateDirectoryTree(options_.inputDir) << "\n\n";
     
-    // Process and format the files
-    auto processedFiles = fileProcessor_->processDirectory(options_.inputDir);
+    // Process and format the files with parallel collection
+    auto processedFiles = fileProcessor_->processDirectory(options_.inputDir, true);
     ss << formatOutput(processedFiles);
     
     // Store the content
