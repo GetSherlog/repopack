@@ -6,7 +6,7 @@ import FileScoringOptions, { FileScoringConfig, defaultFileScoringConfig } from 
 import { TOKENIZER_ENCODINGS } from '../lib/repomix-api'
 
 interface GitHubFormProps {
-  onRepoSubmit: (
+  onSubmit: (
     url: string, 
     includePatterns: string, 
     excludePatterns: string, 
@@ -20,10 +20,10 @@ interface GitHubFormProps {
     fileSelectionStrategy: string,
     fileScoringConfig: FileScoringConfig
   ) => void;
-  isProcessing: boolean;
+  isProcessing?: boolean;
 }
 
-export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormProps) {
+export default function GitHubForm({ onSubmit, isProcessing = false }: GitHubFormProps) {
   const [repoUrl, setRepoUrl] = useState('')
   const [githubToken, setGithubToken] = useState('')
   const [includePatterns, setIncludePatterns] = useState('')
@@ -78,11 +78,11 @@ export default function GitHubForm({ onRepoSubmit, isProcessing }: GitHubFormPro
 
     setError(null)
     try {
-      // Call the handler with all options
-      onRepoSubmit(
-        repoUrl, 
-        includePatterns, 
-        excludePatterns, 
+      // Call the onSubmit prop with all the form values
+      onSubmit(
+        repoUrl,
+        includePatterns,
+        excludePatterns,
         format,
         countTokens,
         tokenEncoding,

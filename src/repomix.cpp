@@ -129,9 +129,16 @@ bool Repomix::run() {
         // Start overall timer
         startTime_ = std::chrono::steady_clock::now();
         
+        // Register a job ID if we don't have one yet
+        if (jobId_.empty()) {
+            jobId_ = ProgressTracker::getInstance().registerJob();
+        }
+        
         if (options_.verbose) {
             std::cout << "Processing directory: " << options_.inputDir << std::endl;
         }
+
+        std::cout << "Processing directory: " << options_.inputDir << std::endl;
         
         // Start processing timer
         auto processStart = std::chrono::steady_clock::now();
@@ -161,10 +168,14 @@ bool Repomix::run() {
             // Process all files using the standard method with parallel collection
             files = fileProcessor_->processDirectory(options_.inputDir, true);
         }
+
+        std::cout << "Files processed: " << files.size() << std::endl;
         
         // End processing timer
         auto processEnd = std::chrono::steady_clock::now();
         processingDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(processEnd - processStart);
+
+        std::cout << "Processing duration: " << processingDuration_.count() << " ms" << std::endl;
         
         // Update statistics
         totalFiles_ = files.size();
@@ -599,4 +610,58 @@ std::vector<FileProcessor::ProcessedFile> Repomix::processSelectedFiles(const st
     }
     
     return processedFiles;
+}
+
+/**
+ * @brief Sets a callback for progress updates
+ * 
+ * @param callback Function to call with progress information
+ */
+void Repomix::setProgressCallback(ProgressCallback callback) {
+    // If fileProcessor is initialized, set the callback
+    if (fileProcessor_) {
+        fileProcessor_->setProgressCallback([this, callback](const FileProcessor::ProgressInfo& progress) {
+            // Forward the progress to the provided callback
+            if (callback) {
+                callback(progress);
+            }
+            
+            // Also update the progress tracker if we have a job ID
+            if (!jobId_.empty()) {
+                ProgressTracker::getInstance().updateProgress(jobId_, progress);
+            }
+        });
+    }
+}
+
+/**
+ * @brief Get current progress information
+ * 
+ * @return FileProcessor::ProgressInfo Current progress data
+ */
+FileProcessor::ProgressInfo Repomix::getCurrentProgress() const {
+    if (fileProcessor_) {
+        return fileProcessor_->getCurrentProgress();
+    }
+    
+    // Return empty progress info if no file processor
+    return FileProcessor::ProgressInfo();
+}
+
+/**
+ * @brief Set the job ID for this Repomix instance
+ * 
+ * @param jobId The job ID to associate with this instance
+ */
+void Repomix::setJobId(const std::string& jobId) {
+    jobId_ = jobId;
+}
+
+/**
+ * @brief Get the job ID for this Repomix instance
+ * 
+ * @return std::string The job ID
+ */
+std::string Repomix::getJobId() const {
+    return jobId_;
 }

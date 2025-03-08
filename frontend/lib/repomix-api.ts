@@ -13,6 +13,30 @@ export interface RepomixApiResponse {
   tokenCount?: number;
   tokenizer?: string;
   scoring_report?: any;
+  jobId?: string;  // Added for progress tracking
+}
+
+// Progress information interface
+export interface ProgressInfo {
+  id: string;
+  totalFiles: number;
+  processedFiles: number;
+  skippedFiles: number;
+  errorFiles: number;
+  currentFile: string;
+  isComplete: boolean;
+  percentage: number;
+  elapsedMs: number;
+}
+
+// Jobs list response interface
+export interface JobsListResponse {
+  jobs: {
+    id: string;
+    percentage: number;
+    isComplete: boolean;
+    elapsedMs: number;
+  }[];
 }
 
 interface ThreadingCapabilities {
@@ -89,6 +113,8 @@ const API_CONFIG = {
     capabilities: '/capabilities',
     processUploadedDir: '/process_uploaded_dir',
     processShared: '/process_shared',
+    progress: '/progress',
+    jobs: '/jobs',
   }
 };
 
@@ -262,8 +288,6 @@ export async function processGitRepo(
         requestBody.scoring_config = fileScoringConfig;
       }
     }
-    
-    // Send request to API - use the existing processRepo endpoint
     const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processRepo}`, {
       method: 'POST',
       headers: {
@@ -357,6 +381,55 @@ export async function getServerCapabilities(): Promise<ThreadingCapabilities> {
       serverVersion: 'unknown',
       supportsMultithreading: false,
     };
+  }
+}
+
+/**
+ * Get progress information for a specific job
+ * @param jobId The ID of the job to get progress for
+ * @returns Promise with progress information
+ */
+export async function getJobProgress(jobId: string): Promise<ProgressInfo> {
+  try {
+    const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.progress}/${jobId}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Server responded with status ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to get job progress:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get a list of all active jobs
+ * @returns Promise with list of jobs
+ */
+export async function getActiveJobs(): Promise<JobsListResponse> {
+  try {
+    const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.jobs}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Server responded with status ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to get active jobs:', error);
+    throw error;
   }
 }
 

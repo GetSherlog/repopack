@@ -14,12 +14,32 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_map>
+#include <mutex>
+#include "progress_tracker.hpp"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 // Global settings
 std::string SHARED_DIRECTORY = "/app/shared";
+
+// Global map to track active processing jobs
+struct ProcessingJob {
+    std::shared_ptr<Repomix> repomix;
+    std::string id;
+    std::chrono::steady_clock::time_point startTime;
+};
+
+// Map of job IDs to processing jobs
+std::unordered_map<std::string, ProcessingJob> activeJobs;
+std::mutex activeJobsMutex;
+
+// Generate a unique job ID
+std::string generateJobId() {
+    auto timestamp = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+    return "job_" + timestamp;
+}
 
 // Callback function for curl to write response data
 static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
@@ -145,6 +165,8 @@ public:
     ADD_METHOD_TO(ApiController::getCapabilities, "/api/capabilities", drogon::Get);
     ADD_METHOD_TO(ApiController::getContentFile, "/api/content/{filename}", drogon::Get);
     ADD_METHOD_TO(ApiController::getScoringReport, "/api/scoring_report", drogon::Post);
+    ADD_METHOD_TO(ApiController::getProgress, "/api/progress/{id}", drogon::Get);
+    ADD_METHOD_TO(ApiController::listJobs, "/api/jobs", drogon::Get);
     METHOD_LIST_END
 
     void processFiles(const drogon::HttpRequestPtr& req, 
@@ -363,6 +385,12 @@ public:
             
             // Process the uploaded files
             Repomix repomix(options);
+            
+            // Register a job for progress tracking
+            std::string jobId = ProgressTracker::getInstance().registerJob();
+            repomix.setJobId(jobId);
+            
+            // Run Repomix
             bool success = repomix.run();
             
             // Format result as JSON
@@ -396,6 +424,9 @@ public:
             
             resp->setStatusCode(drogon::k200OK);
             
+            // Add job ID to response
+            drogonResult["jobId"] = jobId;
+            
         } catch (const std::exception& e) {
             result["success"] = false;
             result["error"] = e.what();
@@ -405,6 +436,12 @@ public:
             drogonResult["error"] = e.what();
             
             resp->setStatusCode(drogon::k500InternalServerError);
+        }
+        
+        // Clean up the job after processing is complete
+        if (!jobId.empty()) {
+            std::lock_guard<std::mutex> lock(activeJobsMutex);
+            activeJobs.erase(jobId);
         }
         
         callback(resp);
@@ -422,6 +459,8 @@ public:
             
             // Parse request body
             auto bodyStr = req->getBody();
+            std::cout << "Request body size: " << bodyStr.size() << " bytes" << std::endl;
+            
             if (bodyStr.empty()) {
                 std::cerr << "Error: Empty request body" << std::endl;
                 result["success"] = false;
@@ -467,13 +506,19 @@ public:
             }
             
             std::string repoUrl = body["repoUrl"];
+
+            std::cout << "Processing repository: " << repoUrl << std::endl;
             
             // Create temp directory
             std::string tempDir = createTempDir();
+
+            std::cout << "Temp directory: " << tempDir << std::endl;
             
             // Clone the repository
             std::string cloneCmd = "git clone --depth=1 " + repoUrl + " " + tempDir;
             int cloneResult = system(cloneCmd.c_str());
+
+            std::cout << "Clone result: " << cloneResult << std::endl;
             
             if (cloneResult != 0) {
                 result["success"] = false;
@@ -510,13 +555,23 @@ public:
             } else {
                 options.format = OutputFormat::Plain;
             }
+
+            std::cout << "Format: " << format << std::endl;
             
             // Don't write to a file in server mode
             options.outputFile = "";
             
             // Process repository
             Repomix repomix(options);
+            
+            // Register a job for progress tracking
+            std::string jobId = ProgressTracker::getInstance().registerJob();
+            repomix.setJobId(jobId);
+            
+            // Run Repomix
             bool success = repomix.run();
+            
+            std::cout << "Success: " << success << std::endl;
             
             // Get outputs before preparing response
             std::string summary = repomix.getSummary();
@@ -795,6 +850,12 @@ public:
             
             // Process the directory
             Repomix repomix(options);
+            
+            // Register a job for progress tracking
+            std::string jobId = ProgressTracker::getInstance().registerJob();
+            repomix.setJobId(jobId);
+            
+            // Run Repomix
             bool success = repomix.run();
             
             // Clean up temp directory
@@ -1179,6 +1240,12 @@ public:
             
             // Process the directory
             Repomix repomix(options);
+            
+            // Register a job for progress tracking
+            std::string jobId = ProgressTracker::getInstance().registerJob();
+            repomix.setJobId(jobId);
+            
+            // Run Repomix
             bool success = repomix.run();
             
             // Get outputs before preparing response
@@ -1769,6 +1836,93 @@ public:
         if (scoringConfig.isMember("use_tree_sitter") && scoringConfig["use_tree_sitter"].isBool()) {
             config.useTreeSitter = scoringConfig["use_tree_sitter"].asBool();
         }
+    }
+
+    // Method to get progress of a specific job
+    void getProgress(const drogon::HttpRequestPtr& req, 
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) {
+        // Create response object
+        auto resp = drogon::HttpResponse::newHttpJsonResponse({});
+        
+        // Set Access-Control-Allow-Origin header for CORS
+        resp->addHeader("Access-Control-Allow-Origin", "*");
+        
+        // Get job progress
+        ProgressTracker::Job job;
+        bool found = ProgressTracker::getInstance().getJobProgress(id, job);
+        
+        if (found) {
+            // Calculate elapsed time
+            auto now = std::chrono::steady_clock::now();
+            auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - job.startTime).count();
+            
+            // Create JSON response
+            json progressJson = {
+                {"id", id},
+                {"totalFiles", job.lastProgress.totalFiles},
+                {"processedFiles", job.lastProgress.processedFiles},
+                {"skippedFiles", job.lastProgress.skippedFiles},
+                {"errorFiles", job.lastProgress.errorFiles},
+                {"currentFile", job.lastProgress.currentFile},
+                {"isComplete", job.isComplete},
+                {"percentage", job.lastProgress.getPercentage()},
+                {"elapsedMs", elapsedMs}
+            };
+            
+            // Set response content
+            resp = drogon::HttpResponse::newHttpJsonResponse(progressJson);
+        } else {
+            // Job not found
+            json errorJson = {
+                {"error", "Job not found"},
+                {"id", id}
+            };
+            resp = drogon::HttpResponse::newHttpJsonResponse(errorJson);
+            resp->setStatusCode(drogon::k404NotFound);
+        }
+        
+        // Return response
+        callback(resp);
+    }
+    
+    // Method to list all active jobs
+    void listJobs(const drogon::HttpRequestPtr& req,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        // Create response object
+        auto resp = drogon::HttpResponse::newHttpJsonResponse({});
+        
+        // Set Access-Control-Allow-Origin header for CORS
+        resp->addHeader("Access-Control-Allow-Origin", "*");
+        
+        // Get all jobs
+        auto jobs = ProgressTracker::getInstance().getAllJobs();
+        
+        json jobsArray = json::array();
+        auto now = std::chrono::steady_clock::now();
+        
+        for (const auto& pair : jobs) {
+            const auto& job = pair.second;
+            
+            // Calculate elapsed time
+            auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - job.startTime).count();
+            
+            jobsArray.push_back({
+                {"id", job.id},
+                {"percentage", job.lastProgress.getPercentage()},
+                {"isComplete", job.isComplete},
+                {"elapsedMs", elapsedMs}
+            });
+        }
+        
+        json jobsJson = {
+            {"jobs", jobsArray}
+        };
+        
+        resp = drogon::HttpResponse::newHttpJsonResponse(jobsJson);
+        callback(resp);
     }
 };
 

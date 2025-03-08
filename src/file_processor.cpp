@@ -124,6 +124,8 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const 
     if (!fs::exists(dir) || !fs::is_directory(dir)) {
         throw std::runtime_error("Invalid directory: " + dir.string());
     }
+
+    std::cout << "Processing directory: " << dir << std::endl;
     
     // If using parallel collection, delegate to that implementation
     if (useParallelCollection) {
@@ -131,6 +133,8 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const 
         const size_t defaultBatchSize = 100;
         return processDirectoryParallel(dir, defaultBatchSize);
     }
+
+    std::cout << "Using original implementation" << std::endl;
     
     // Otherwise, use the original implementation
     // Reset state
@@ -138,7 +142,19 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const 
     fileQueue_ = std::queue<fs::path>();
     results_.clear();
     
+    // Reset progress tracking
+    {
+        std::lock_guard<std::mutex> lock(progressMutex_);
+        progress_ = ProgressInfo();
+    }
+    
     collectFiles(dir);
+    
+    // Update total files for progress tracking
+    {
+        std::lock_guard<std::mutex> lock(queueMutex_);
+        updateProgress(fileQueue_.size());
+    }
     
     // If we have files to process, start worker threads
     if (!fileQueue_.empty()) {
@@ -205,6 +221,9 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const 
         }
     }
     
+    // Mark progress as complete when done
+    setProgressComplete(true);
+    
     return results_;
 }
 
@@ -257,6 +276,7 @@ void FileProcessor::collectFiles(const fs::path& dir) {
  * added to the results.
  */
 void FileProcessor::workerThread() {
+    std::cout << "Worker thread started" << std::endl;
     while (!done_) {
         fs::path filePath;
         
@@ -274,12 +294,26 @@ void FileProcessor::workerThread() {
         
         // Process the file outside the lock
         try {
+            // Update current file in progress
+            {
+                std::lock_guard<std::mutex> lock(progressMutex_);
+                progress_.currentFile = filePath.string();
+                reportProgress();
+            }
+            
             ProcessedFile result = processFile(filePath);
             
             // Only add to results if successfully processed
             if (result.processed || result.skipped) {
                 std::lock_guard<std::mutex> lock(resultsMutex_);
                 results_.push_back(std::move(result));
+                
+                // Update progress
+                if (result.skipped) {
+                    incrementSkippedFiles();
+                } else {
+                    incrementProcessedFiles();
+                }
             }
         } catch (const std::exception& e) {
             // Log error and continue with next file
@@ -293,6 +327,9 @@ void FileProcessor::workerThread() {
             
             std::lock_guard<std::mutex> lock(resultsMutex_);
             results_.push_back(std::move(errorResult));
+            
+            // Update error count
+            incrementErrorFiles();
         }
     }
 }
@@ -1349,10 +1386,14 @@ std::vector<FileProcessor::NamedEntity> FileProcessor::extractNamedEntities(cons
 std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectoryParallel(const fs::path& dir, size_t batchSize) {
     // Clear any existing results and queues
     results_.clear();
+
+    std::cout << "Clearing existing results and queues" << std::endl;
     
     while (!fileQueue_.empty()) {
         fileQueue_.pop();
     }
+
+    std::cout << "Clearing directory queue" << std::endl;
     
     while (!directoryQueue_.empty()) {
         directoryQueue_.pop();
@@ -1360,9 +1401,19 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectoryParalle
     
     // Reset collection done flag
     dirCollectionDone_ = false;
+
+    std::cout << "Resetting collection done flag" << std::endl;
+    
+    // Reset progress tracking
+    {
+        std::lock_guard<std::mutex> lock(progressMutex_);
+        progress_ = ProgressInfo();
+    }
     
     // Start parallel file collection
     collectFilesParallel(dir, batchSize);
+
+    std::cout << "Starting parallel file collection" << std::endl;
     
     // Process files with worker threads
     const unsigned int numThreads = std::thread::hardware_concurrency();
@@ -1370,6 +1421,8 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectoryParalle
     
     std::vector<std::thread> workers;
     bool threadsStarted = true;
+
+    std::cout << "Creating worker threads" << std::endl;
     
     try {
         // Create worker threads
@@ -1425,6 +1478,12 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectoryParalle
             }
         }
     }
+    
+    // After file collection is done, update total files
+    updateProgress(fileQueue_.size());
+    
+    // Mark progress as complete when done
+    setProgressComplete(true);
     
     return results_;
 }
@@ -1551,5 +1610,104 @@ void FileProcessor::fileCollectorWorker(size_t batchSize) {
             static_cast<unsigned int>(4))) {
         dirCollectionDone_ = true;
         dirQueueCondition_.notify_all();
+    }
+}
+
+/**
+ * @brief Set a callback function to receive progress updates
+ * 
+ * @param callback Function to call with progress information
+ */
+void FileProcessor::setProgressCallback(ProgressCallback callback) {
+    std::lock_guard<std::mutex> lock(progressMutex_);
+    progressCallback_ = callback;
+}
+
+/**
+ * @brief Get current progress information
+ * 
+ * @return ProgressInfo Current progress data
+ */
+FileProcessor::ProgressInfo FileProcessor::getCurrentProgress() const {
+    std::lock_guard<std::mutex> lock(progressMutex_);
+    return progress_;
+}
+
+/**
+ * @brief Update total files count in progress info
+ * 
+ * @param totalFiles Total number of files to process
+ */
+void FileProcessor::updateProgress(size_t totalFiles) {
+    std::lock_guard<std::mutex> lock(progressMutex_);
+    progress_.totalFiles = totalFiles;
+    reportProgress();
+}
+
+/**
+ * @brief Increment processed files count and update current file info
+ * 
+ * @param currentFile Path of the file currently being processed
+ */
+void FileProcessor::incrementProcessedFiles(const fs::path& currentFile) {
+    std::lock_guard<std::mutex> lock(progressMutex_);
+    progress_.processedFiles++;
+    if (!currentFile.empty()) {
+        progress_.currentFile = currentFile.string();
+    }
+    reportProgress();
+}
+
+/**
+ * @brief Increment skipped files count
+ */
+void FileProcessor::incrementSkippedFiles() {
+    std::lock_guard<std::mutex> lock(progressMutex_);
+    progress_.skippedFiles++;
+    reportProgress();
+}
+
+/**
+ * @brief Increment error files count
+ */
+void FileProcessor::incrementErrorFiles() {
+    std::lock_guard<std::mutex> lock(progressMutex_);
+    progress_.errorFiles++;
+    reportProgress();
+}
+
+/**
+ * @brief Set processing complete flag
+ * 
+ * @param complete Whether processing is complete
+ */
+void FileProcessor::setProgressComplete(bool complete) {
+    std::lock_guard<std::mutex> lock(progressMutex_);
+    progress_.isComplete = complete;
+    
+    // When process completes, make one final report
+    if (complete) {
+        reportProgress();
+    }
+}
+
+/**
+ * @brief Report progress via callback if set
+ */
+void FileProcessor::reportProgress() {
+    // Log progress to console
+    double percentage = progress_.getPercentage();
+    std::cout << "[Progress] " << std::fixed << std::setprecision(1) << percentage 
+              << "% (" << progress_.processedFiles << "/" << progress_.totalFiles 
+              << " files, " << progress_.skippedFiles << " skipped, " 
+              << progress_.errorFiles << " errors)" << std::endl;
+    
+    if (progress_.currentFile.empty() == false) {
+        std::cout << "[Current] " << progress_.currentFile << std::endl;
+    }
+    
+    // Call the callback if set
+    if (progressCallback_) {
+        progressCallback_(progress_);
     }
 }

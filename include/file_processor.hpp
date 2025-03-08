@@ -14,6 +14,7 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_set>
+#include <functional>
 #include "pattern_matcher.hpp"
 
 namespace fs = std::filesystem;
@@ -116,6 +117,28 @@ public:
         NamedEntity(const std::string& n, EntityType t) : name(n), type(t) {}
     };
 
+    // Progress reporting structure
+    struct ProgressInfo {
+        size_t totalFiles = 0;           // Total number of files discovered
+        size_t processedFiles = 0;        // Number of files processed so far
+        size_t skippedFiles = 0;          // Number of files skipped
+        size_t errorFiles = 0;            // Number of files with errors
+        std::string currentFile = "";     // Path of file currently being processed
+        bool isComplete = false;          // Flag indicating if processing is complete
+        
+        // Default constructor
+        ProgressInfo() = default;
+        
+        // Get progress as percentage (0-100)
+        double getPercentage() const {
+            if (totalFiles == 0) return 0.0;
+            return (static_cast<double>(processedFiles + skippedFiles + errorFiles) / totalFiles) * 100.0;
+        }
+    };
+    
+    // Define progress callback type
+    using ProgressCallback = std::function<void(const ProgressInfo&)>;
+
     explicit FileProcessor(const PatternMatcher& patternMatcher, 
                         unsigned int numThreads = std::thread::hardware_concurrency());
     ~FileProcessor();
@@ -149,6 +172,12 @@ public:
      * @return std::vector<ProcessedFile> Results of processing
      */
     std::vector<ProcessedFile> processDirectoryParallel(const fs::path& dir, size_t batchSize = 100);
+
+    // Set a callback for progress updates
+    void setProgressCallback(ProgressCallback callback);
+    
+    // Get current progress information
+    ProgressInfo getCurrentProgress() const;
 
 private:
     const PatternMatcher& patternMatcher_;
@@ -246,4 +275,17 @@ private:
     
     // Signal for directory collectors to finish
     std::atomic<bool> dirCollectionDone_{false};
+
+    // Progress tracking members
+    ProgressInfo progress_;
+    std::mutex progressMutex_;
+    ProgressCallback progressCallback_ = nullptr;
+    
+    // Helper methods for progress tracking
+    void updateProgress(size_t totalFiles);
+    void incrementProcessedFiles(const fs::path& currentFile = {});
+    void incrementSkippedFiles();
+    void incrementErrorFiles();
+    void setProgressComplete(bool complete = true);
+    void reportProgress();
 };

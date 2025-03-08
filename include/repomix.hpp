@@ -9,6 +9,7 @@
 #include "pattern_matcher.hpp"
 #include "tokenizer.hpp"
 #include "file_scorer.hpp"
+#include "progress_tracker.hpp"
 
 namespace fs = std::filesystem;
 
@@ -49,10 +50,25 @@ struct RepomixOptions {
 
 class Repomix {
 public:
+    // Define progress callback type that passes through FileProcessor::ProgressInfo
+    using ProgressCallback = FileProcessor::ProgressCallback;
+    
     Repomix(const RepomixOptions& options);
     
     // Run the repomix process
     bool run();
+    
+    // Set a callback for progress updates
+    void setProgressCallback(ProgressCallback callback);
+    
+    // Get the current progress information
+    FileProcessor::ProgressInfo getCurrentProgress() const;
+    
+    // Set the job ID for this Repomix instance
+    void setJobId(const std::string& jobId);
+    
+    // Get the job ID for this Repomix instance
+    std::string getJobId() const;
     
     // Get the summary of the processed repository
     std::string getSummary() const;
@@ -78,6 +94,9 @@ private:
     std::unique_ptr<PatternMatcher> patternMatcher_;
     std::unique_ptr<Tokenizer> tokenizer_;
     std::unique_ptr<FileScorer> fileScorer_;
+    
+    // Job ID for progress tracking
+    std::string jobId_;
     
     // Scored files (if scoring was used)
     std::vector<FileScorer::ScoredFile> scoredFiles_;
