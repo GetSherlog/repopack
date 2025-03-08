@@ -854,9 +854,9 @@ std::string FileProcessor::extractSignatures(const std::string& content, const f
  * @return std::string Extracted documentation formatted as a string
  * 
  * Extracts multiple types of documentation:
- * - Multi-line comments (C-style /* ... */)
+ * - Multi-line comments 
  * - Single-line comments (// style)
- * - Python docstrings (""" ... """ or ''' ... ''')
+ * - Python docstrings ("""...""" or '''...''')
  * 
  * Preserves the original formatting of the extracted documentation.
  */
@@ -1346,7 +1346,7 @@ std::vector<FileProcessor::NamedEntity> FileProcessor::extractNamedEntities(cons
  * @param batchSize Size of batches when adding files to the queue
  * @return std::vector<ProcessedFile> Results of processing
  */
-std::vector<ProcessedFile> FileProcessor::processDirectoryParallel(const fs::path& dir, size_t batchSize) {
+std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectoryParallel(const fs::path& dir, size_t batchSize) {
     // Clear any existing results and queues
     results_.clear();
     

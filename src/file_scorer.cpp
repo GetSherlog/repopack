@@ -106,7 +106,7 @@ std::vector<FileScorer::ScoredFile> FileScorer::scoreRepository(const fs::path& 
             
             // Add dependency graph score if applicable
             if (config_.dependencyGraphWeight > 0.0f) {
-                float connectivityScore = calculateConnectivityScore(entry.path(), dependencyGraph, repoPath);
+                float connectivityScore = calculateConnectivityScore(entry.path(), dependencyGraph);
                 scoredFile.componentScores["connectivity"] = connectivityScore * config_.dependencyGraphWeight;
                 scoredFile.score += scoredFile.componentScores["connectivity"];
             }
@@ -447,8 +447,6 @@ float FileScorer::scoreCodeDensity(const fs::path& filePath) {
         int scopeDepth = 0;
         std::string extension = filePath.extension().string();
         bool inMultiLineComment = false;
-        bool inString = false;
-        char stringDelimiter = 0;
         
         // Regex patterns for detecting code structures based on language
         std::regex functionPattern;
@@ -994,18 +992,18 @@ std::unordered_map<std::string, std::vector<std::string>> FileScorer::buildDepen
  * @param importPath The import path from the source file
  * @param sourceFilePath Path to the file containing the import
  * @param repoRoot Path to the repository root
- * @param includeDirectories Additional directories to search for imports
+ * @param filesByName Map of file extensions to possible absolute paths
  * @return std::string Resolved absolute path or empty string if not resolved
  */
 std::string FileScorer::resolveImportPath(const std::string& importPath, 
                                          const fs::path& sourceFilePath,
                                          const fs::path& repoRoot,
-                                         const std::vector<std::string>& includeDirectories) {
+                                         const std::unordered_map<std::string, std::vector<fs::path>>& filesByName) {
     // Handle absolute path (relative to repo root)
     if (importPath.front() == '/') {
         fs::path absolutePath = repoRoot / importPath.substr(1);
         if (fs::exists(absolutePath) && fs::is_regular_file(absolutePath)) {
-            return fs::relative(absolutePath, repoRoot).string();
+            return fs::relative(absolutePath, sourceFilePath.parent_path()).string();
         }
     }
     
@@ -1019,14 +1017,14 @@ std::string FileScorer::resolveImportPath(const std::string& importPath,
             
             // Check if file exists
             if (fs::exists(relativePath) && fs::is_regular_file(relativePath)) {
-                return fs::relative(relativePath, repoRoot).string();
+                return fs::relative(relativePath, sourceFilePath.parent_path()).string();
             }
             
             // If path doesn't exist as-is, try adding common extensions
             for (const auto& ext : {".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".rb", ".php", ".go", ".rs"}) {
                 fs::path withExt = fs::path(relativePath.string() + ext);
                 if (fs::exists(withExt) && fs::is_regular_file(withExt)) {
-                    return fs::relative(withExt, repoRoot).string();
+                    return fs::relative(withExt, sourceFilePath.parent_path()).string();
                 }
             }
             
@@ -1034,7 +1032,7 @@ std::string FileScorer::resolveImportPath(const std::string& importPath,
             for (const auto& indexFile : {"index.js", "index.ts", "index.jsx", "index.tsx", "__init__.py"}) {
                 fs::path indexPath = relativePath / indexFile;
                 if (fs::exists(indexPath) && fs::is_regular_file(indexPath)) {
-                    return fs::relative(indexPath, repoRoot).string();
+                    return fs::relative(indexPath, sourceFilePath.parent_path()).string();
                 }
             }
         }
@@ -1052,7 +1050,7 @@ std::string FileScorer::resolveImportPath(const std::string& importPath,
         const auto& possibleFiles = filesByName.at(filename);
         if (!possibleFiles.empty()) {
             // Return the first match (could be improved to find the most likely match)
-            return fs::relative(possibleFiles.front(), repoRoot).string();
+            return fs::relative(possibleFiles.front(), sourceFilePath.parent_path()).string();
         }
     }
     
@@ -1068,12 +1066,10 @@ std::string FileScorer::resolveImportPath(const std::string& importPath,
  * 
  * @param filePath Path to the file to evaluate
  * @param dependencyGraph The dependency graph of the repository
- * @param repoRoot Path to the repository root
  * @return float Connectivity score (0.0 to 1.0)
  */
 float FileScorer::calculateConnectivityScore(const fs::path& filePath,
-                                           const std::unordered_map<std::string, std::vector<std::string>>& dependencyGraph,
-                                           const fs::path& repoRoot) {
+                                           const std::unordered_map<std::string, std::vector<std::string>>& dependencyGraph) {
     std::string relPath = fs::relative(filePath, fs::current_path()).string();
     
     // Count incoming and outgoing connections
