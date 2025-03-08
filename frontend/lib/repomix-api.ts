@@ -28,7 +28,7 @@ interface RepoFile extends File {
 
 // GitHub request body interface
 interface GitHubRequestBody {
-  repo_url: string;
+  repoUrl: string;
   format: string;
   token: string;
   include?: string;
@@ -89,7 +89,6 @@ const API_CONFIG = {
     capabilities: '/capabilities',
     processUploadedDir: '/process_uploaded_dir',
     processShared: '/process_shared',
-    processGitRepo: '/process_git_repo',
   }
 };
 
@@ -215,7 +214,7 @@ export async function processGitRepo(
     
     // Prepare the request body
     const requestBody: GitHubRequestBody = {
-      repo_url: repoUrl,
+      repoUrl: repoUrl,
       format: format,
       token: token
     };
@@ -264,8 +263,8 @@ export async function processGitRepo(
       }
     }
     
-    // Send request to API
-    const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processGitRepo}`, {
+    // Send request to API - use the existing processRepo endpoint
+    const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.processRepo}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
