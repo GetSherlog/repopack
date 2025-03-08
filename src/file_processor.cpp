@@ -1,3 +1,4 @@
+#include "file_processor.hpp"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -10,17 +11,21 @@
 #include <functional>
 #include <map>
 #include <iostream>
-#include "../include/file_processor.hpp"
-#include "../include/code_ner.hpp"
+#include "code_ner.hpp"  // Make sure this include is present
 #include "repomix.hpp"  // For SummarizationOptions
 
 // Size threshold for using memory mapping (files larger than this will use memory mapping)
 constexpr size_t MMAP_THRESHOLD = 1 * 1024 * 1024; // 1 MB
 
+// Add a buffer size for reading files
+constexpr size_t FILE_BUFFER_SIZE = 128 * 1024; // 128 KB
+
 FileProcessor::FileProcessor(const PatternMatcher& patternMatcher, unsigned int numThreads)
     : patternMatcher_(patternMatcher), 
       numThreads_(numThreads == 0 ? 1 : numThreads),
       done_(false) {
+    // Pre-allocate buffers that will be reused
+    fileReadBuffer_.resize(FILE_BUFFER_SIZE);
 }
 
 FileProcessor::~FileProcessor() {
@@ -125,97 +130,134 @@ std::vector<FileProcessor::ProcessedFile> FileProcessor::processDirectory(const 
 
 void FileProcessor::collectFiles(const fs::path& dir) {
     try {
-        // Recursively iterate through directory
+        std::vector<fs::path> files;
+        files.reserve(1000); // Pre-allocate space for better performance
+        
+        // First pass: collect all files without locking the mutex
         for (const auto& entry : fs::recursive_directory_iterator(dir)) {
-            // Skip directories
-            if (entry.is_directory()) {
-                continue;
+            if (fs::is_regular_file(entry.path())) {
+                // Check if file should be processed
+                if (shouldProcessFile(entry.path())) {
+                    files.push_back(entry.path());
+                }
             }
-            
-            // Skip files that match ignore patterns
-            const auto& path = entry.path();
-            if (!shouldProcessFile(path)) {
-                continue;
+        }
+        
+        // Second pass: add all files to queue in one lock operation
+        {
+            std::lock_guard<std::mutex> lock(queueMutex_);
+            for (const auto& file : files) {
+                fileQueue_.push(file);
             }
-            
-            // Add to queue
-            fileQueue_.push(path);
         }
     }
     catch (const std::exception& e) {
-        std::cerr << "Warning: Failed to collect files from " << dir << ": " << e.what() << std::endl;
+        std::cerr << "Error collecting files: " << e.what() << std::endl;
     }
 }
 
 void FileProcessor::workerThread() {
     while (!done_) {
-        // Get a file to process from the queue
         fs::path filePath;
+        
+        // Try to get a file from the queue
         {
             std::lock_guard<std::mutex> lock(queueMutex_);
             if (fileQueue_.empty()) {
-                break;
+                // No more files, we're done
+                return;
             }
             
             filePath = fileQueue_.front();
             fileQueue_.pop();
         }
         
-        // Process the file
+        // Process the file outside the lock
         try {
-            ProcessedFile processedFile;
+            ProcessedFile result = processFile(filePath);
             
-            // Check if we should use memory mapping for this file
-            if (shouldUseMemoryMapping(filePath)) {
-                processedFile = processFileWithMemoryMapping(filePath);
-            } else {
-                processedFile = processFile(filePath);
-            }
-            
-            // Add result to the result vector
-            {
+            // Only add to results if successfully processed
+            if (result.processed || result.skipped) {
                 std::lock_guard<std::mutex> lock(resultsMutex_);
-                results_.push_back(std::move(processedFile));
+                results_.push_back(std::move(result));
             }
-        }
-        catch (const std::exception& e) {
-            std::cerr << "Warning: Failed to process file " << filePath << ": " << e.what() << std::endl;
+        } catch (const std::exception& e) {
+            // Log error and continue with next file
+            std::cerr << "Error processing file " << filePath << ": " << e.what() << std::endl;
+            
+            // Add error entry to results
+            ProcessedFile errorResult;
+            errorResult.path = filePath;
+            errorResult.filename = filePath.filename().string();
+            errorResult.error = e.what();
+            
+            std::lock_guard<std::mutex> lock(resultsMutex_);
+            results_.push_back(std::move(errorResult));
         }
     }
 }
 
-FileProcessor::ProcessedFile FileProcessor::processFile(const fs::path& filePath) {
-    // Validate file
-    if (!fs::exists(filePath) || !fs::is_regular_file(filePath)) {
-        throw std::runtime_error("Invalid file: " + filePath.string());
-    }
-    
-    // Read file content
-    std::ifstream file(filePath, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("Failed to open file: " + filePath.string());
-    }
-    
-    // Preallocate string based on file size
-    const auto fileSize = fs::file_size(filePath);
-    std::string content;
-    content.reserve(fileSize);
-    
-    // Read file content into string using a larger buffer for better performance
-    constexpr size_t bufferSize = 16384; // 16 KB buffer
-    char buffer[bufferSize];
-    
-    while (file) {
-        file.read(buffer, bufferSize);
-        content.append(buffer, file.gcount());
-    }
-    
-    // Create processed file
+FileProcessor::ProcessedFile FileProcessor::processFile(const fs::path& filePath) const {
     ProcessedFile result;
     result.path = filePath;
-    result.content = std::move(content);
-    result.lineCount = countLines(result.content);
-    result.byteSize = result.content.size();
+    result.filename = filePath.filename().string();
+    result.extension = filePath.extension().string();
+    
+    if (!fs::exists(filePath) || !fs::is_regular_file(filePath)) {
+        result.error = "File does not exist or is not a regular file";
+        return result;
+    }
+    
+    // Skip if file exceeds size limit
+    std::error_code ec;
+    auto fileSize = fs::file_size(filePath, ec);
+    if (ec) {
+        result.error = "Error getting file size: " + ec.message();
+        return result;
+    }
+    
+    if (fileSize > MAX_FILE_SIZE) {
+        result.error = "File too large, skipping";
+        result.skipped = true;
+        return result;
+    }
+    
+    // Skip binary files
+    if (isBinaryFile(filePath)) {
+        result.error = "Binary file detected, skipping";
+        result.skipped = true;
+        return result;
+    }
+    
+    try {
+        // Use our optimized file reading function
+        std::string content = readFile(filePath);
+        
+        // Store content if keeping content
+        if (keepContent_) {
+            result.content = content;
+        }
+        
+        // Extract first N lines as a summary
+        result.firstLines = extractFirstNLines(content, 10);
+        
+        // Extract representative snippets
+        result.snippets = extractRepresentativeSnippets(content, 3);
+        
+        // Get line count
+        result.lineCount = countLines(content);
+        
+        // Perform named entity recognition if requested
+        if (performNER_) {
+            result.entities = extractNamedEntities(content, filePath);
+            result.formattedEntities = formatEntities(result.entities, true);
+        }
+        
+        // Mark as processed successfully
+        result.processed = true;
+    } catch (const std::exception& e) {
+        result.error = std::string("Error processing file: ") + e.what();
+    }
     
     return result;
 }
@@ -429,7 +471,7 @@ std::string FileProcessor::summarizeFile(const ProcessedFile& file) const {
     if (summarizationOptions_.includeEntityRecognition) {
         CodeNER* nerSystem = getCodeNER();
         if (nerSystem) {
-            auto entities = nerSystem->extractEntities(file.content, file.path);
+            auto entities = nerSystem->extractEntities(file.content, file.path.string());
             std::string entitySummary = formatEntities(entities, summarizationOptions_.groupEntitiesByType);
             
             if (!entitySummary.empty()) {
@@ -758,4 +800,213 @@ std::string FileProcessor::formatEntities(const std::vector<NamedEntity>& entiti
     }
     
     return result.str();
+}
+
+// Optimize file reading methods
+std::string FileProcessor::readFile(const fs::path& filePath) const {
+    std::error_code ec;
+    uintmax_t fileSize = fs::file_size(filePath, ec);
+    
+    if (ec) {
+        throw std::runtime_error("Error getting file size for " + filePath.string() + ": " + ec.message());
+    }
+    
+    if (fileSize == 0) {
+        return "";
+    }
+    
+    // Use memory mapping for large files
+    if (fileSize > MMAP_THRESHOLD) {
+        return readLargeFile(filePath, fileSize);
+    }
+    
+    // For smaller files, use buffered reading
+    std::ifstream file(filePath, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + filePath.string());
+    }
+    
+    // Reserve the exact size we need to avoid reallocations
+    std::string content;
+    content.reserve(static_cast<size_t>(fileSize));
+    
+    // Use a buffer to read the file in chunks
+    char buffer[FILE_BUFFER_SIZE];
+    
+    while (file) {
+        file.read(buffer, FILE_BUFFER_SIZE);
+        content.append(buffer, file.gcount());
+    }
+    
+    return content;
+}
+
+std::string FileProcessor::readLargeFile(const fs::path& filePath, uintmax_t fileSize) const {
+    int fd = open(filePath.c_str(), O_RDONLY);
+    if (fd == -1) {
+        throw std::runtime_error("Failed to open file for memory mapping: " + filePath.string());
+    }
+    
+    void* mapped = mmap(nullptr, fileSize, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd); // Close file descriptor immediately, mmap keeps the file open
+    
+    if (mapped == MAP_FAILED) {
+        throw std::runtime_error("Memory mapping failed for file: " + filePath.string());
+    }
+    
+    // Copy the mapped memory to a string
+    std::string content(static_cast<char*>(mapped), fileSize);
+    
+    // Unmap the file
+    munmap(mapped, fileSize);
+    
+    return content;
+}
+
+bool FileProcessor::isBinaryFile(const fs::path& filePath) const {
+    // Get file extension (lowercase)
+    std::string ext = filePath.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    
+    // Common binary file extensions
+    static const std::unordered_set<std::string> binaryExtensions = {
+        ".exe", ".dll", ".so", ".dylib", ".o", ".obj", ".a", ".lib", 
+        ".bin", ".dat", ".db", ".sqlite", ".class", ".jar", ".pyc",
+        ".pyo", ".zip", ".tar", ".gz", ".xz", ".bz2", ".7z", ".rar",
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico", ".mp3", 
+        ".mp4", ".avi", ".mov", ".pdf", ".doc", ".docx", ".xls", ".xlsx"
+    };
+    
+    // If it's a known binary extension, return true
+    if (binaryExtensions.find(ext) != binaryExtensions.end()) {
+        return true;
+    }
+    
+    // Peek at the first few bytes to check for binary content
+    try {
+        std::string content;
+        
+        // Only read a small portion of the file to detect binary content
+        std::ifstream file(filePath, std::ios::binary);
+        if (!file.is_open()) {
+            // If we can't open it, assume it's not binary
+            return false;
+        }
+        
+        char buffer[1024];
+        file.read(buffer, sizeof(buffer));
+        std::streamsize bytesRead = file.gcount();
+        
+        // Check for null bytes and other binary indicators
+        int nullCount = 0;
+        int textCount = 0;
+        
+        for (int i = 0; i < bytesRead; i++) {
+            char c = buffer[i];
+            if (c == 0) {
+                nullCount++;
+            } else if ((c >= 32 && c <= 126) || c == '\n' || c == '\r' || c == '\t') {
+                textCount++;
+            }
+        }
+        
+        // If more than 10% are null bytes or if less than 80% are text chars, consider it binary
+        double nullRatio = static_cast<double>(nullCount) / bytesRead;
+        double textRatio = static_cast<double>(textCount) / bytesRead;
+        
+        return (nullRatio > 0.1 || textRatio < 0.8);
+    } catch (...) {
+        // If we can't read it, assume it's not binary
+        return false;
+    }
+}
+
+// Named entity recognition implementation
+std::vector<FileProcessor::NamedEntity> FileProcessor::extractNamedEntities(const std::string& content, const fs::path& filePath) const {
+    // If no NER is required or content is empty, return empty
+    if (!performNER_ || content.empty()) {
+        return {};
+    }
+    
+    // Get CodeNER instance
+    CodeNER* ner = getCodeNER();
+    if (!ner) {
+        std::cerr << "Warning: CodeNER not available, skipping entity extraction for " << filePath << std::endl;
+        return {};
+    }
+    
+    // Prepare result vector
+    std::vector<NamedEntity> entities;
+    
+    try {
+        // Extract entities using CodeNER - just pass the content
+        auto nerEntities = ner->extractEntities(content, filePath.string());
+        
+        // Convert CodeNER entities to our format
+        for (const auto& nerEntity : nerEntities) {
+            NamedEntity entity;
+            entity.name = nerEntity.name;
+            
+            // Map types using integer values (assuming EntityType is an enum with integer values)
+            int typeValue = static_cast<int>(nerEntity.type);
+            
+            // Map based on enum value ranges
+            if (typeValue == 0) {
+                entity.type = NamedEntity::EntityType::Class;
+            } else if (typeValue == 1) {
+                entity.type = NamedEntity::EntityType::Function;
+            } else if (typeValue == 2) {
+                entity.type = NamedEntity::EntityType::Variable;
+            } else if (typeValue == 3) {
+                entity.type = NamedEntity::EntityType::Enum;
+            } else if (typeValue == 4) {
+                entity.type = NamedEntity::EntityType::Import;
+            } else {
+                entity.type = NamedEntity::EntityType::Other;
+            }
+            
+            entities.push_back(entity);
+        }
+        
+        // Filter entities based on summarization options
+        if (!summarizationOptions_.includeClassNames) {
+            entities.erase(std::remove_if(entities.begin(), entities.end(), 
+                [](const NamedEntity& e) { return e.type == NamedEntity::EntityType::Class; }), 
+                entities.end());
+        }
+        
+        if (!summarizationOptions_.includeFunctionNames) {
+            entities.erase(std::remove_if(entities.begin(), entities.end(), 
+                [](const NamedEntity& e) { return e.type == NamedEntity::EntityType::Function; }), 
+                entities.end());
+        }
+        
+        if (!summarizationOptions_.includeVariableNames) {
+            entities.erase(std::remove_if(entities.begin(), entities.end(), 
+                [](const NamedEntity& e) { return e.type == NamedEntity::EntityType::Variable; }), 
+                entities.end());
+        }
+        
+        if (!summarizationOptions_.includeEnumValues) {
+            entities.erase(std::remove_if(entities.begin(), entities.end(), 
+                [](const NamedEntity& e) { return e.type == NamedEntity::EntityType::Enum; }), 
+                entities.end());
+        }
+        
+        if (!summarizationOptions_.includeImports) {
+            entities.erase(std::remove_if(entities.begin(), entities.end(), 
+                [](const NamedEntity& e) { return e.type == NamedEntity::EntityType::Import; }), 
+                entities.end());
+        }
+        
+        // Limit number of entities if needed
+        if (entities.size() > static_cast<size_t>(summarizationOptions_.maxEntities) && 
+            summarizationOptions_.maxEntities > 0) {
+            entities.resize(summarizationOptions_.maxEntities);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error extracting entities from " << filePath << ": " << e.what() << std::endl;
+    }
+    
+    return entities;
 }

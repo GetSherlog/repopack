@@ -81,21 +81,56 @@ size_t Tokenizer::countTokens(const std::string& text) const {
     return tokens.size();
 #else
     // Fallback implementation if tiktoken is not available
-    // A simple approximation: count words (plus some overhead for special tokens)
-    size_t wordCount = 0;
-    bool inWord = false;
+    // Use a more efficient approximation method
     
-    for (char c : text) {
-        if (std::isspace(c)) {
-            inWord = false;
-        } else if (!inWord) {
-            inWord = true;
-            wordCount++;
+    // Cache these values to avoid repeated calls
+    static const size_t AVG_CHARS_PER_TOKEN = 4; // Average characters per token
+    
+    // Quick estimate for empty or very short texts
+    if (text.empty()) {
+        return 0;
+    }
+    
+    if (text.length() <= 4) {
+        return 1;
+    }
+    
+    // Count tokens based on word boundaries and special characters
+    size_t tokenCount = 0;
+    bool inWord = false;
+    size_t currentWordLength = 0;
+    
+    for (const char c : text) {
+        if (std::isspace(c) || c == '.' || c == ',' || c == '!' || c == '?' || 
+            c == ':' || c == ';' || c == '(' || c == ')' || c == '[' || c == ']' || 
+            c == '{' || c == '}' || c == '"' || c == '\'' || c == '`') {
+            
+            if (inWord) {
+                // End of a word - add tokens based on word length
+                tokenCount += (currentWordLength + AVG_CHARS_PER_TOKEN - 1) / AVG_CHARS_PER_TOKEN;
+                inWord = false;
+                currentWordLength = 0;
+            }
+            
+            // Count separators and punctuation as potential tokens
+            if (!std::isspace(c)) {
+                tokenCount += 1;
+            }
+        } else {
+            if (!inWord) {
+                inWord = true;
+            }
+            currentWordLength++;
         }
     }
     
-    // Rough approximation: words are typically 1.3 tokens
-    return static_cast<size_t>(wordCount * 1.3);
+    // Handle the last word if the text doesn't end with a delimiter
+    if (inWord) {
+        tokenCount += (currentWordLength + AVG_CHARS_PER_TOKEN - 1) / AVG_CHARS_PER_TOKEN;
+    }
+    
+    // Add a small overhead for special cases
+    return std::max(tokenCount, static_cast<size_t>(1));
 #endif
 }
 

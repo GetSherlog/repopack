@@ -46,20 +46,28 @@ std::string createTempDir() {
 bool isBase64Encoded(const std::string& str, std::string* outDecoded = nullptr) {
     // If empty or too short, it's not base64
     if (str.empty() || str.size() < 4) {
-        std::cout << "Base64 check failed: String too short (" << str.size() << " chars)" << std::endl;
         return false;
     }
     
     // Quick check of characters - base64 should only contain A-Z, a-z, 0-9, +, /, and = for padding
-    const std::string validChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    static const char validChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    static bool validCharsTable[256] = {false};
+    static bool tableInitialized = false;
     
-    // Check the first 100 characters to see if they match base64 pattern
-    // This helps avoid expensive decoding of large outputs that aren't base64
+    // Initialize lookup table once (thread-safe in C++11 and later)
+    if (!tableInitialized) {
+        for (const char c : validChars) {
+            validCharsTable[static_cast<unsigned char>(c)] = true;
+        }
+        tableInitialized = true;
+    }
+    
+    // Check the first 100 characters using the lookup table (much faster)
     int sampleSize = std::min(100, static_cast<int>(str.size()));
     int validCount = 0;
     
     for (int i = 0; i < sampleSize; i++) {
-        if (validChars.find(str[i]) != std::string::npos) {
+        if (validCharsTable[static_cast<unsigned char>(str[i])]) {
             validCount++;
         }
     }
@@ -67,7 +75,6 @@ bool isBase64Encoded(const std::string& str, std::string* outDecoded = nullptr) 
     // If less than 95% of characters in the sample are valid base64 chars, it's not base64
     double validRatio = static_cast<double>(validCount) / sampleSize;
     if (validRatio < 0.95) {
-        std::cout << "Base64 check failed: Invalid character ratio " << validRatio << std::endl;
         return false;
     }
     
@@ -76,51 +83,37 @@ bool isBase64Encoded(const std::string& str, std::string* outDecoded = nullptr) 
         std::string decoded = drogon::utils::base64Decode(str);
         
         if (decoded.empty()) {
-            std::cout << "Base64 decoding resulted in empty string" << std::endl;
             return false;
         }
         
         // Check if decoded content looks like valid text or binary data
-        bool seemsValid = false;
-        double textRatio = 0.0;
         int textChars = 0;
         
-        // Count how many chars in decoded string look like normal text
-        for (char c : decoded) {
+        // Count how many chars in decoded string look like normal text (first 1000 chars max)
+        const int checkLimit = std::min(static_cast<int>(decoded.size()), 1000);
+        for (int i = 0; i < checkLimit; i++) {
+            char c = decoded[i];
             if ((c >= 32 && c <= 126) || c == '\n' || c == '\r' || c == '\t') {
                 textChars++;
             }
         }
         
-        textRatio = static_cast<double>(textChars) / decoded.size();
-        std::cout << "Decoded content text ratio: " << textRatio << std::endl;
+        double textRatio = static_cast<double>(textChars) / checkLimit;
         
         // Be more conservative: only consider it base64 if >90% looks like text
-        // (previously was 75% or 30% for larger content)
         if (textRatio > 0.9) {
-            seemsValid = true;
+            if (outDecoded) {
+                *outDecoded = std::move(decoded); // Move instead of copy
+            }
+            return true;
         }
-        
-        if (!seemsValid) {
-            std::cout << "Decoded content doesn't appear to be valid text (text ratio: " << textRatio << ")" << std::endl;
-            return false;
-        }
-        
-        // If we reach here, it seems like valid Base64
-        std::cout << "Successful Base64 decoding with content length " << decoded.size() << " bytes" << std::endl;
-        
-        // If caller wants the decoded content, provide it
-        if (outDecoded) {
-            *outDecoded = std::move(decoded);
-        }
-        return true;
-    } catch (const std::exception& e) {
-        std::cout << "Base64 decoding failed with exception: " << e.what() << std::endl;
-        return false;
-    } catch (...) {
-        std::cout << "Base64 decoding failed with unknown exception" << std::endl;
+    }
+    catch (...) {
+        // If decoding fails, it's not valid base64
         return false;
     }
+    
+    return false;
 }
 
 // Use Drogon's utility for base64 decoding

@@ -71,12 +71,30 @@ class CodeNER;
 
 class FileProcessor {
 public:
+    // Forward declare NamedEntity to use in ProcessedFile
+    struct NamedEntity;
+    
     struct ProcessedFile {
         fs::path path;
         std::string content;
-        size_t lineCount;
-        size_t byteSize;
-        bool isSummarized = false;  // Flag to indicate if the file has been summarized
+        size_t lineCount = 0;
+        size_t byteSize = 0;
+        bool isSummarized = false;      // Flag to indicate if the file has been summarized
+        
+        // Additional fields for optimized processing
+        std::string filename;           // Filename without path
+        std::string extension;          // File extension
+        std::string error;              // Error message if processing failed
+        bool processed = false;         // Flag to indicate successful processing
+        bool skipped = false;           // Flag to indicate file was skipped
+        
+        // Content summary fields
+        std::string firstLines;         // First N lines of the file
+        std::string snippets;           // Representative snippets
+        
+        // Entity recognition fields
+        std::vector<NamedEntity> entities;  // Named entities found in the file
+        std::string formattedEntities;      // Formatted entity text
     };
 
     // Named Entity for code elements
@@ -106,7 +124,7 @@ public:
     std::vector<ProcessedFile> processDirectory(const fs::path& dir);
 
     // Process a single file
-    ProcessedFile processFile(const fs::path& filePath);
+    ProcessedFile processFile(const fs::path& filePath) const;
     
     // Set summarization options
     void setSummarizationOptions(const SummarizationOptions& options);
@@ -159,4 +177,24 @@ private:
     
     // Format entities as a string
     std::string formatEntities(const std::vector<NamedEntity>& entities, bool groupByType) const;
+    
+    // Extract named entities from content
+    std::vector<NamedEntity> extractNamedEntities(const std::string& content, const fs::path& filePath) const;
+
+    // Maximum file size to process (100 MB)
+    static constexpr size_t MAX_FILE_SIZE = 100 * 1024 * 1024;
+    
+    // File type detection
+    bool isBinaryFile(const fs::path& filePath) const;
+    
+    // Optimized file reading methods
+    std::string readFile(const fs::path& filePath) const;
+    std::string readLargeFile(const fs::path& filePath, uintmax_t fileSize) const;
+    
+    // Pre-allocated buffer for file reading to reduce memory allocations
+    std::vector<char> fileReadBuffer_;
+
+    // Content flags
+    bool keepContent_ = true;
+    bool performNER_ = true;
 };

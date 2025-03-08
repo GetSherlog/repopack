@@ -235,9 +235,8 @@ export default function FileUploader({ onFilesUploaded, isProcessing }: FileUplo
             
             {/* File Scoring Options */}
             <FileScoringOptions 
-              options={scoringConfig} 
+              config={scoringConfig} 
               onChange={setScoringConfig} 
-              enabled={fileSelection === 'scoring'} 
             />
             
             {/* Summarization Options */}
